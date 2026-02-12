@@ -97,7 +97,7 @@ def main():
         font-size: 0.75em;
         color: #666;
         z-index: 999;
-        text-align: center;
+        text-align: left;
     }
     .footer strong {
         color: #333;
