@@ -88,9 +88,9 @@ def main():
     <style>
     .footer {
         position: fixed;
-        left: 0;
+        left: 21rem;
         bottom: 0;
-        width: 100%;
+        right: 0;
         background-color: #f8f9fa;
         border-top: 1px solid #ddd;
         padding: 8px 20px;
@@ -101,6 +101,10 @@ def main():
     }
     .footer strong {
         color: #333;
+    }
+    /* Adjust footer when sidebar is collapsed */
+    [data-testid="collapsedControl"] ~ div .footer {
+        left: 0;
     }
     </style>
     <div class="footer">
