@@ -15,9 +15,9 @@ from ITR.data.excel import ExcelProvider
 
 # Mapping for UI display names
 TIMEFRAME_OPTIONS = {
-    "Short-term": ETimeFrames.SHORT,
-    "Mid-term": ETimeFrames.MID,
-    "Long-term": ETimeFrames.LONG,
+    "SHORT": ETimeFrames.SHORT,
+    "MID": ETimeFrames.MID,
+    "LONG": ETimeFrames.LONG,
 }
 
 SCOPE_OPTIONS = {

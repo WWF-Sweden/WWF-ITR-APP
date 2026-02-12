@@ -59,7 +59,7 @@ from utils.data_source import select_data_source, validate_data, data_preview
 # Page configuration
 st.set_page_config(
     page_title="WWF ITR Tool",
-    page_icon="🌍",
+    page_icon="assets/favicon.png",  # Can also use an emoji like "🌍" or a URL
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -68,9 +68,16 @@ st.set_page_config(
 def main():
     """Main application entry point."""
     
-    # Header
-    st.title("🌍 WWF Finance Tool")
-    st.subheader("Temperature Scoring & Portfolio Coverage")
+    # Header with logo
+    col1, col2 = st.columns([1, 10])
+    with col1:
+        # Add your logo image here (e.g., WWF panda logo)
+        st.image("assets/panda.jpg", width=80)
+        # st.markdown("🌍")  # Temporary placeholder - replace with st.image() above
+    with col2:
+        st.title("WWF Finance Tool")
+        st.subheader("Temperature Scoring & Portfolio Coverage")
+    
     st.markdown("""
     Analyze your portfolio's alignment with climate goals using the 
     [CDP-WWF Temperature Scoring Methodology](https://wwfint.awsassets.panda.org/downloads/cdp-wwf-temperature-scoring-methodology---september-2024.pdf).
@@ -135,7 +142,7 @@ def main():
         selected_timeframes = st.multiselect(
             "Timeframes",
             options=list(timeframe_options.keys()),
-            default=["Mid-term"],
+            default=["MID"],
             help="Select one or more timeframes for analysis"
         )
         time_frames = [timeframe_options[tf] for tf in selected_timeframes]
@@ -189,7 +196,12 @@ def main():
     companies = convert_portfolio_to_companies(portfolio_df)
     # Add confirmation before running calculations
     st.markdown("---")
-    st.subheader("🚀 Ready to Calculate Temperature Scores")
+    
+    col_img, col_header = st.columns([1, 12])
+    with col_img:
+        st.image("assets/itr-logo.png", width=64)
+    with col_header:
+        st.subheader("Ready to Calculate Temperature Scores")
     
     col1, col2, col3 = st.columns([2, 1, 2])
     with col1:
@@ -250,16 +262,40 @@ def main():
         with tab1:
             st.header("Portfolio Temperature Score Overview")
             
-            # Get primary score for display
-            primary_tf = time_frames[0] if time_frames else ETimeFrames.MID
-            primary_scope = scopes[-1] if scopes else EScope.S1S2S3  # Prefer S1S2S3
+            # Get primary score for display with preference logic
+            # Scope preference: S1S2S3 > S1S2
+            preferred_scope_order = [EScope.S1S2S3, EScope.S1S2]
+            primary_scope = None
+            for pref_scope in preferred_scope_order:
+                if pref_scope in scopes:
+                    primary_scope = pref_scope
+                    break
+            if primary_scope is None:
+                primary_scope = scopes[0] if scopes else EScope.S1S2S3
             
+            # Timeframe preference: MID > SHORT > LONG
+            preferred_tf_order = [ETimeFrames.MID, ETimeFrames.SHORT, ETimeFrames.LONG]
+            primary_tf = None
+            for pref_tf in preferred_tf_order:
+                if pref_tf in time_frames:
+                    primary_tf = pref_tf
+                    break
+            if primary_tf is None:
+                primary_tf = time_frames[0] if time_frames else ETimeFrames.MID
+            
+            # Extract portfolio score with safer nested access
+            portfolio_score = 3.4  # Default fallback
             try:
-                tf_key = primary_tf.name.lower()
-                scope_key = primary_scope.name.lower()
-                portfolio_score = aggregated_scores.dict()[tf_key][scope_key]['all']['score']
-            except (KeyError, TypeError):
-                portfolio_score = 3.4  # Default
+                tf_key = primary_tf.name.lower()  # Timeframes are lowercase: 'mid'
+                scope_key = primary_scope.name  # Scopes are UPPERCASE: 'S1S2S3'
+                scores_dict = aggregated_scores.model_dump()
+                
+                if tf_key in scores_dict and scope_key in scores_dict[tf_key]:
+                    all_scores = scores_dict[tf_key][scope_key].get('all', {})
+                    portfolio_score = all_scores.get('score', portfolio_score)
+            except (KeyError, TypeError, AttributeError) as e:
+                logger.warning(f"Could not extract portfolio score: {e}")
+                portfolio_score = 3.4
             
             # Summary metrics
             col1, col2, col3, col4 = st.columns(4)
@@ -272,6 +308,21 @@ def main():
             with col4:
                 target_gap = portfolio_score - 1.5
                 st.metric("Gap to 1.5°C", f"{target_gap:.2f}°C", delta=f"{target_gap:.2f}", delta_color="inverse")
+            
+            # Display which timeframe and scope are shown
+            scope_display_names = {
+                'S1': 'Scope 1',
+                'S2': 'Scope 2',
+                'S3': 'Scope 3',
+                'S1S2': 'Scope 1+2',
+                'S1S2S3': 'Scope 1+2+3'
+            }
+            tf_display_names = {
+                'SHORT': 'Short-term',
+                'MID': 'Mid-term',
+                'LONG': 'Long-term'
+            }
+            st.info(f"📊 Chart displays: **{tf_display_names.get(primary_tf.name, primary_tf.name)}** timeframe, **{scope_display_names.get(primary_scope.name, primary_scope.name)}**")
             
             # Gauge charts
             st.plotly_chart(

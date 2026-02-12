@@ -340,8 +340,8 @@ def plot_portfolio_summary_metrics(
     fig.add_trace(go.Indicator(
         mode="gauge+number+delta",
         value=portfolio_score,
-        delta={'reference': target_score, 'relative': False, 'increasing': {'color': 'red'}, 'decreasing': {'color': 'green'}},
-        number={'suffix': '°C'},
+        delta={'reference': target_score, 'relative': False, 'increasing': {'color': 'red'}, 'decreasing': {'color': 'green'}, 'valueformat': '.2f'},
+        number={'suffix': '°C', 'valueformat': '.2f'},
         gauge={
             'axis': {'range': [1.0, 4.0]},
             'bar': {'color': 'darkblue'},
