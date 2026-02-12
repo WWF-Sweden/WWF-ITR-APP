@@ -191,6 +191,16 @@ def main():
             grouping = ["sector", "region"]
         else:
             grouping = [selected_grouping]
+        
+        st.divider()
+        
+        # Copyright and Disclaimer
+        st.markdown("""
+        <div style='font-size: 0.8em; color: #666;'>
+        <p><strong>© WWF Sweden, 2026</strong></p>
+        <p><em>Disclaimer:</em> This tool provides temperature scores based on the CDP-WWF Temperature Scoring Methodology v1.5. Results are for informational purposes only and should not be considered as financial or investment advice.</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Convert portfolio to companies
     companies = convert_portfolio_to_companies(portfolio_df)
