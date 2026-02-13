@@ -75,7 +75,7 @@ def main():
         st.image("assets/panda.jpg", width=80)
         # st.markdown("🌍")  # Temporary placeholder - replace with st.image() above
     with col2:
-        st.title("WWF Finance Tool")
+        st.title("WWF ITR Tool")
         st.subheader("Temperature Scoring & Portfolio Coverage")
     
     st.markdown("""
