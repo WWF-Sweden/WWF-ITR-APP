@@ -27,7 +27,14 @@ from utils.data_loader import (
     load_uploaded_portfolio_file,
     convert_portfolio_to_companies,
     validate_portfolio_data,
+    extract_provider_dataframes,
+    create_provider_from_dataframes,
+    save_data_to_db,
+    load_data_from_db,
+    get_saved_datasets,
+    delete_saved_dataset,
 )
+from db.database import init_db
 from utils.scoring import (
     get_timeframe_options,
     get_scope_options,
@@ -120,17 +127,28 @@ def main():
         
         data_source = st.radio(
             "Data Source",
-            options=["Sample Data", "Upload Custom Data"],
+            options=["Sample Data", "Upload Custom Data", "Load from Database"],
             index=0,
-            help="Choose sample data for testing or upload your own files"
+            help="Choose sample data, upload files, or load a previously saved dataset"
         )
         
+        # -- Initialise DataFrames that will be used everywhere ----------------
+        portfolio_df = None
+        fundamental_df = None
+        target_df = None
+        provider = None
+
         if data_source == "Sample Data":
             provider_path, portfolio_path = download_sample_data()
             provider = load_provider_data(provider_path)
             portfolio_df = load_portfolio_data(portfolio_path)
+            # Extract provider sheets for editing / saving
+            provider_dfs = extract_provider_dataframes(provider_path)
+            fundamental_df = provider_dfs["fundamental_data"]
+            target_df = provider_dfs["target_data"]
             st.success("✅ Sample data loaded")
-        else:
+
+        elif data_source == "Upload Custom Data":
             st.markdown("#### Provider Data (Excel)")
             uploaded_provider = st.file_uploader(
                 "Upload fundamental & target data",
@@ -154,6 +172,10 @@ def main():
             provider_path = load_uploaded_provider_file(uploaded_provider)
             provider = load_provider_data(provider_path)
             portfolio_df = load_uploaded_portfolio_file(uploaded_portfolio)
+            # Extract provider sheets for editing / saving
+            provider_dfs = extract_provider_dataframes(provider_path)
+            fundamental_df = provider_dfs["fundamental_data"]
+            target_df = provider_dfs["target_data"]
             
             # Validate portfolio
             is_valid, missing = validate_portfolio_data(portfolio_df)
@@ -162,7 +184,42 @@ def main():
                 st.stop()
             
             st.success("✅ Custom data loaded")
-        
+
+        else:  # Load from Database
+            init_db()
+            datasets = get_saved_datasets()
+            if not datasets:
+                st.warning("No saved datasets found. Load data from files first and save it.")
+                st.stop()
+            
+            dataset_names = [d["name"] for d in datasets]
+            selected_dataset = st.selectbox(
+                "Select Dataset",
+                options=dataset_names,
+                help="Choose a previously saved dataset"
+            )
+            
+            # Show dataset info
+            ds_info = next(d for d in datasets if d["name"] == selected_dataset)
+            st.caption(f"Updated: {ds_info['updated_at'][:16]}")
+            if ds_info.get("description"):
+                st.caption(ds_info["description"])
+            
+            # Delete button
+            if st.button("🗑️ Delete this dataset", key="delete_ds"):
+                delete_saved_dataset(selected_dataset)
+                st.success(f"Deleted '{selected_dataset}'")
+                st.rerun()
+            
+            # Load from DB
+            db_data = load_data_from_db(selected_dataset)
+            portfolio_df = db_data["portfolio"]
+            fundamental_df = db_data["fundamental_data"]
+            target_df = db_data["target_data"]
+            # Reconstruct provider from DB DataFrames
+            provider = create_provider_from_dataframes(fundamental_df, target_df)
+            st.success(f"✅ Loaded '{selected_dataset}' from database")
+
         st.divider()
         
         # Analysis Parameters
@@ -223,6 +280,76 @@ def main():
         else:
             grouping = [selected_grouping]
     
+    # ------------------------------------------------------------------
+    # Data Review & Editing Section
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("📝 Review & Edit Data")
+    st.caption(
+        "Inspect and optionally edit the loaded data before running the analysis. "
+        "Changes are used for this session. Use **Save to Database** in the sidebar to persist."
+    )
+
+    edit_tab1, edit_tab2, edit_tab3 = st.tabs([
+        "Portfolio", "Company Fundamentals", "Targets"
+    ])
+
+    with edit_tab1:
+        st.markdown(f"**{len(portfolio_df)} companies** in portfolio")
+        edited_portfolio = st.data_editor(
+            portfolio_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="edit_portfolio",
+        )
+        # Use the edited version going forward
+        portfolio_df = edited_portfolio
+
+    with edit_tab2:
+        st.markdown(f"**{len(fundamental_df)} companies** with fundamental data")
+        edited_fundamental = st.data_editor(
+            fundamental_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="edit_fundamental",
+        )
+        fundamental_df = edited_fundamental
+
+    with edit_tab3:
+        st.markdown(f"**{len(target_df)} targets**")
+        edited_target = st.data_editor(
+            target_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="edit_target",
+        )
+        target_df = edited_target
+
+    # -- Save to Database (uses edited data) --------------------------------
+    with st.expander("💾 Save data to local database", expanded=False):
+        save_col1, save_col2 = st.columns([2, 1])
+        with save_col1:
+            save_name = st.text_input(
+                "Dataset name",
+                value="my_dataset",
+                key="save_ds_name",
+                help="Give this dataset a name for later retrieval"
+            )
+            save_desc = st.text_input(
+                "Description (optional)",
+                value="",
+                key="save_ds_desc",
+            )
+        with save_col2:
+            st.markdown("")
+            st.markdown("")
+            if st.button("💾 Save", type="primary", key="save_to_db"):
+                save_data_to_db(save_name, portfolio_df, fundamental_df, target_df, save_desc)
+                st.success(f"✅ Saved as '{save_name}'")
+
+    # Rebuild provider from current (possibly edited) DataFrames
+    provider = create_provider_from_dataframes(fundamental_df, target_df)
+
     # Convert portfolio to companies
     companies = convert_portfolio_to_companies(portfolio_df)
     # Add confirmation before running calculations
