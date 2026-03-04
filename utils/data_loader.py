@@ -1,6 +1,6 @@
 """
 Data loading utilities for WWF ITR Tool.
-Handles Excel/CSV file loading and data validation.
+Handles Excel/CSV file loading, data validation, and database persistence.
 """
 from asyncio.log import logger
 import os
@@ -8,10 +8,19 @@ import tempfile
 import urllib.request
 import pandas as pd
 import streamlit as st
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import ITR
 from ITR.data.excel import ExcelProvider
+
+from db.database import (
+    init_db,
+    save_dataset,
+    load_dataset,
+    list_datasets,
+    delete_dataset,
+    update_table,
+)
 
 
 @st.cache_data(show_spinner="Loading sample data...")
@@ -149,3 +158,85 @@ def validate_provider_file(file_path: str) -> Tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+# ---------------------------------------------------------------------------
+# Provider DataFrame extraction / reconstruction
+# ---------------------------------------------------------------------------
+
+def extract_provider_dataframes(file_path: str) -> Dict[str, pd.DataFrame]:
+    """
+    Read the provider Excel file and return its sheets as DataFrames.
+
+    Returns:
+        Dict with keys 'fundamental_data' and 'target_data'.
+    """
+    sheets = pd.read_excel(file_path, sheet_name=None, skiprows=0)
+    return {
+        "fundamental_data": sheets.get("fundamental_data", pd.DataFrame()),
+        "target_data": sheets.get("target_data", pd.DataFrame()),
+    }
+
+
+def create_provider_from_dataframes(
+    fundamental_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+) -> ExcelProvider:
+    """
+    Reconstruct an ExcelProvider from (possibly edited) DataFrames
+    by writing them into a temporary Excel file.
+
+    Args:
+        fundamental_df: Company fundamentals data.
+        target_df: Target data.
+
+    Returns:
+        ExcelProvider instance ready for scoring.
+    """
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            fundamental_df.to_excel(writer, sheet_name="fundamental_data", index=False)
+            target_df.to_excel(writer, sheet_name="target_data", index=False)
+        return ExcelProvider(path=tmp_path)
+    finally:
+        # ExcelProvider reads everything into memory, so we can clean up
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Database convenience wrappers (used by app.py)
+# ---------------------------------------------------------------------------
+
+def save_data_to_db(
+    name: str,
+    portfolio_df: pd.DataFrame,
+    fundamental_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+    description: str = "",
+) -> None:
+    """Save a complete dataset (portfolio + provider) to the local SQLite DB."""
+    save_dataset(name, portfolio_df, fundamental_df, target_df, description)
+
+
+def load_data_from_db(name: str) -> Dict[str, pd.DataFrame]:
+    """
+    Load a named dataset from the local SQLite DB.
+
+    Returns:
+        Dict with keys 'portfolio', 'fundamental_data', 'target_data'.
+    """
+    return load_dataset(name)
+
+
+def get_saved_datasets():
+    """Return list of dataset metadata dicts from the database."""
+    return list_datasets()
+
+
+def delete_saved_dataset(name: str) -> None:
+    """Delete a named dataset from the database."""
+    delete_dataset(name)

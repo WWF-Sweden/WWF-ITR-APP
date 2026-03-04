@@ -147,8 +147,8 @@ def data_preview(portfolio_df: pd.DataFrame, fundamentals_df: pd.DataFrame) -> N
         
         with col1:
             st.write("**Portfolio Data**")
-            st.dataframe(portfolio_df.head(10), use_container_width=True)
+            st.dataframe(portfolio_df.head(10), width="stretch")
             
         with col2:
             st.write("**Fundamentals Data**")
-            st.dataframe(fundamentals_df.head(10), use_container_width=True)
+            st.dataframe(fundamentals_df.head(10), width="stretch")
