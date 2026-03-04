@@ -115,13 +115,16 @@ def run_scenario_analysis(
     )
     
     # Calculate scenario scores
+    # NOTE: scenario must be passed to the constructor (not set afterwards)
+    # because ScenarioType.TARGETS modifies self.default_score during
+    # __init__ — assigning the scenario after construction misses this.
     temperature_score = TemperatureScore(
         time_frames=time_frames,
         scopes=scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
+        scenario=scenario,
     )
-    temperature_score.scenario = scenario
     
     scenario_companies = ITR.utils.dataframe_to_portfolio(scenario_portfolio)
     scenario_scores = temperature_score.calculate(
@@ -152,8 +155,8 @@ def calculate_scenario_impact(
         Dictionary with impact metrics
     """
     try:
-        tf_key = time_frame.name.lower()
-        scope_key = scope.name.lower()
+        tf_key = time_frame.name.lower()   # Timeframe keys are lowercase: 'mid'
+        scope_key = scope.name              # Scope keys are UPPERCASE: 'S1S2S3'
         
         original_dict = original_aggregated.dict()
         scenario_dict = scenario_aggregated.dict()
@@ -261,8 +264,8 @@ def compare_group_scores(
         DataFrame comparing group scores
     """
     try:
-        tf_key = time_frame.name.lower()
-        scope_key = scope.name.lower()
+        tf_key = time_frame.name.lower()   # Timeframe keys are lowercase: 'mid'
+        scope_key = scope.name              # Scope keys are UPPERCASE: 'S1S2S3'
         
         original_dict = original_aggregated.dict()
         scenario_dict = scenario_aggregated.dict()
