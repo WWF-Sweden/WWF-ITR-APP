@@ -124,6 +124,7 @@ def main():
     # Sidebar - Data Configuration
     with st.sidebar:
         st.header("📊 Data Configuration")
+        st.markdown("[📄 Data Requirements](https://wwf-sweden.github.io/ITR-tool/DataRequirements.html)")
         
         data_source = st.radio(
             "Data Source",
@@ -299,7 +300,7 @@ def main():
         edited_portfolio = st.data_editor(
             portfolio_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             key="edit_portfolio",
         )
         # Use the edited version going forward
@@ -310,7 +311,7 @@ def main():
         edited_fundamental = st.data_editor(
             fundamental_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             key="edit_fundamental",
         )
         fundamental_df = edited_fundamental
@@ -320,7 +321,7 @@ def main():
         edited_target = st.data_editor(
             target_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             key="edit_target",
         )
         target_df = edited_target
@@ -371,11 +372,11 @@ def main():
         if 'calculation_run' not in st.session_state:
             st.session_state.calculation_run = False
         
-        if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
+        if st.button("▶️ Run Analysis", type="primary", width="stretch"):
             st.session_state.calculation_run = True
         
         if st.session_state.calculation_run:
-            if st.button("🔄 Reset", use_container_width=True):
+            if st.button("🔄 Reset", width="stretch"):
                 st.session_state.calculation_run = False
                 st.rerun()
     
@@ -485,17 +486,17 @@ def main():
             # Gauge charts
             st.plotly_chart(
                 plot_portfolio_summary_metrics(portfolio_score, coverage),
-                use_container_width=True
+                width="stretch"
             )
             
             # Score matrix
             st.subheader("Temperature Scores by Timeframe & Scope")
             scores_df = get_aggregated_scores_df(aggregated_scores)
-            st.dataframe(scores_df, use_container_width=True)
+            st.dataframe(scores_df, width="stretch")
             
             # Portfolio data preview
             with st.expander("📋 View Portfolio Data"):
-                st.dataframe(portfolio_df.head(20), use_container_width=True)
+                st.dataframe(portfolio_df.head(20), width="stretch")
         
         # Tab 2: Hotspot Analysis
         with tab2:
@@ -533,7 +534,7 @@ def main():
                     grouping=grouping,
                     title=f"Temperature Scores - {analysis_tf} / {analysis_scope}"
                 )
-                st.plotly_chart(heatmap_fig, use_container_width=True)
+                st.plotly_chart(heatmap_fig, width="stretch")
             else:
                 st.info("💡 Select a grouping option in the sidebar to see hotspot analysis by sector, region, etc.")
                 
@@ -564,8 +565,8 @@ def main():
                 
                 if not contributions.empty and 'sector' in contributions.columns:
                     pie_fig, bar_fig = plot_sector_statistics(contributions)
-                    st.plotly_chart(pie_fig, use_container_width=True)
-                    st.plotly_chart(bar_fig, use_container_width=True)
+                    st.plotly_chart(pie_fig, width="stretch")
+                    st.plotly_chart(bar_fig, width="stretch")
         
         # Tab 3: Company Analysis
         with tab3:
@@ -603,7 +604,7 @@ def main():
             top_n = st.slider("Number of companies to show", 5, 30, 10, key="top_n")
             
             contrib_fig = plot_company_contributions(contributions, top_n=top_n)
-            st.plotly_chart(contrib_fig, use_container_width=True)
+            st.plotly_chart(contrib_fig, width="stretch")
             
             # Detailed table
             st.subheader("Company Details")
@@ -627,7 +628,7 @@ def main():
             
             st.dataframe(
                 display_df[available_cols].round(2),
-                use_container_width=True,
+                width="stretch",
                 height=400
             )
         
@@ -708,7 +709,7 @@ def main():
                     
                     st.dataframe(
                         candidates[candidates['company_name'].isin(selected_companies)],
-                        use_container_width=True,
+                        width="stretch",
                         height=200
                     )
                 else:
@@ -767,7 +768,7 @@ def main():
                         
                         if not comparison_df.empty:
                             st.subheader("Group Score Comparison")
-                            st.dataframe(comparison_df, use_container_width=True)
+                            st.dataframe(comparison_df, width="stretch")
         
         # Tab 5: Export Data
         with tab5:
