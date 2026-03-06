@@ -136,21 +136,23 @@ def main():
             help="Choose sample data, upload files, or load a previously saved dataset"
         )
         
-        # -- Initialise DataFrames that will be used everywhere ----------------
-        portfolio_df = None
-        fundamental_df = None
-        target_df = None
-        provider = None
+        # Clear previously loaded data when the user switches source
+        if "_data_source" in st.session_state and st.session_state._data_source != data_source:
+            for _key in ("data_loaded", "portfolio_df", "fundamental_df", "target_df",
+                         "scoring_results", "calculation_run",
+                         "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
+                st.session_state.pop(_key, None)
+            st.session_state._data_source = data_source
+
+        # -- Source-specific configuration (no data loaded yet) ----------------
+        _ready_to_load = False  # tracks whether the Load button should be enabled
+        uploaded_provider = None
+        uploaded_portfolio = None
+        selected_dataset = None
 
         if data_source == "Sample Data":
-            provider_path, portfolio_path = download_sample_data()
-            provider = load_provider_data(provider_path)
-            portfolio_df = load_portfolio_data(portfolio_path)
-            # Extract provider sheets for editing / saving
-            provider_dfs = extract_provider_dataframes(provider_path)
-            fundamental_df = provider_dfs["fundamental_data"]
-            target_df = provider_dfs["target_data"]
-            st.success("✅ Sample data loaded")
+            st.info("📁 Built-in example data will be used for demonstration.")
+            _ready_to_load = True
 
         elif data_source == "Upload Custom Data":
             st.markdown("#### Provider Data (Excel)")
@@ -169,60 +171,104 @@ def main():
                 help="CSV file with company_id and investment_value columns"
             )
             
-            if uploaded_provider is None or uploaded_portfolio is None:
+            if uploaded_provider is not None and uploaded_portfolio is not None:
+                _ready_to_load = True
+            else:
                 st.warning("⚠️ Please upload both files to continue")
-                st.stop()
-            
-            provider_path = load_uploaded_provider_file(uploaded_provider)
-            provider = load_provider_data(provider_path)
-            portfolio_df = load_uploaded_portfolio_file(uploaded_portfolio)
-            # Extract provider sheets for editing / saving
-            provider_dfs = extract_provider_dataframes(provider_path)
-            fundamental_df = provider_dfs["fundamental_data"]
-            target_df = provider_dfs["target_data"]
-            
-            # Validate portfolio
-            is_valid, missing = validate_portfolio_data(portfolio_df)
-            if not is_valid:
-                st.error(f"❌ Missing required columns: {', '.join(missing)}")
-                st.stop()
-            
-            st.success("✅ Custom data loaded")
 
         else:  # Load from Database
             init_db()
             datasets = get_saved_datasets()
             if not datasets:
                 st.warning("No saved datasets found. Load data from files first and save it.")
-                st.stop()
-            
-            dataset_names = [d["name"] for d in datasets]
-            selected_dataset = st.selectbox(
-                "Select Dataset",
-                options=dataset_names,
-                help="Choose a previously saved dataset"
-            )
-            
-            # Show dataset info
-            ds_info = next(d for d in datasets if d["name"] == selected_dataset)
-            st.caption(f"Updated: {ds_info['updated_at'][:16]}")
-            if ds_info.get("description"):
-                st.caption(ds_info["description"])
-            
-            # Delete button
-            if st.button("🗑️ Delete this dataset", key="delete_ds"):
-                delete_saved_dataset(selected_dataset)
-                st.success(f"Deleted '{selected_dataset}'")
+            else:
+                dataset_names = [d["name"] for d in datasets]
+                selected_dataset = st.selectbox(
+                    "Select Dataset",
+                    options=dataset_names,
+                    help="Choose a previously saved dataset"
+                )
+                
+                # Show dataset info
+                ds_info = next(d for d in datasets if d["name"] == selected_dataset)
+                st.caption(f"Updated: {ds_info['updated_at'][:16]}")
+                if ds_info.get("description"):
+                    st.caption(ds_info["description"])
+                
+                # Delete button
+                if st.button("🗑️ Delete this dataset", key="delete_ds"):
+                    delete_saved_dataset(selected_dataset)
+                    st.success(f"Deleted '{selected_dataset}'")
+                    st.rerun()
+                
+                _ready_to_load = True
+
+        # -- Load Data button --------------------------------------------------
+        st.divider()
+        data_is_loaded = st.session_state.get("data_loaded", False)
+
+        if data_is_loaded:
+            st.success(f"✅ Data loaded ({st.session_state.get('_loaded_source', data_source)})")
+            if st.button("🔄 Reload / Change Source", key="reload_data"):
+                for _key in ("data_loaded", "portfolio_df", "fundamental_df", "target_df",
+                             "scoring_results", "calculation_run",
+                             "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
+                    st.session_state.pop(_key, None)
                 st.rerun()
-            
-            # Load from DB
-            db_data = load_data_from_db(selected_dataset)
-            portfolio_df = db_data["portfolio"]
-            fundamental_df = db_data["fundamental_data"]
-            target_df = db_data["target_data"]
-            # Reconstruct provider from DB DataFrames
-            provider = create_provider_from_dataframes(fundamental_df, target_df)
-            st.success(f"✅ Loaded '{selected_dataset}' from database")
+        else:
+            load_clicked = st.button(
+                "📥 Load Data",
+                type="primary",
+                disabled=not _ready_to_load,
+                key="load_data_btn",
+                help="Click to load the selected data source",
+                use_container_width=True,
+            )
+
+            if load_clicked:
+                try:
+                    if data_source == "Sample Data":
+                        provider_path, portfolio_path = download_sample_data()
+                        provider = load_provider_data(provider_path)
+                        portfolio_df = load_portfolio_data(portfolio_path)
+                        provider_dfs = extract_provider_dataframes(provider_path)
+                        fundamental_df = provider_dfs["fundamental_data"]
+                        target_df = provider_dfs["target_data"]
+
+                    elif data_source == "Upload Custom Data":
+                        provider_path = load_uploaded_provider_file(uploaded_provider)
+                        provider = load_provider_data(provider_path)
+                        portfolio_df = load_uploaded_portfolio_file(uploaded_portfolio)
+                        provider_dfs = extract_provider_dataframes(provider_path)
+                        fundamental_df = provider_dfs["fundamental_data"]
+                        target_df = provider_dfs["target_data"]
+                        # Validate portfolio
+                        is_valid, missing = validate_portfolio_data(portfolio_df)
+                        if not is_valid:
+                            st.error(f"❌ Missing required columns: {', '.join(missing)}")
+                            st.stop()
+
+                    else:  # Load from Database
+                        db_data = load_data_from_db(selected_dataset)
+                        portfolio_df = db_data["portfolio"]
+                        fundamental_df = db_data["fundamental_data"]
+                        target_df = db_data["target_data"]
+
+                    # Persist loaded data into session state
+                    st.session_state.portfolio_df = portfolio_df.copy()
+                    st.session_state.fundamental_df = fundamental_df.copy()
+                    st.session_state.target_df = target_df.copy()
+                    st.session_state._data_source = data_source
+                    st.session_state._loaded_source = data_source
+                    st.session_state.data_loaded = True
+                    # Clear stale scoring results
+                    st.session_state.pop("scoring_results", None)
+                    st.session_state.pop("calculation_run", None)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"❌ Failed to load data: {e}")
+                    logger.exception("Data loading failed")
 
         st.divider()
         
@@ -285,6 +331,26 @@ def main():
             grouping = [selected_grouping]
     
     # ------------------------------------------------------------------
+    # Guard: show landing page if no data loaded yet
+    # ------------------------------------------------------------------
+    if not st.session_state.get("data_loaded", False):
+        st.markdown("---")
+        st.markdown(
+            """
+            ### 👋 Welcome! Choose a data source to get started.
+
+            Use the **sidebar** on the left to:
+            1. **Select** a data source (Sample Data, Upload, or Database)
+            2. Configure any required options (e.g. upload files)
+            3. Click **📥 Load Data** to begin
+
+            Once data is loaded you'll be able to review, edit, and run temperature
+            scoring analysis on your portfolio.
+            """
+        )
+        st.stop()
+
+    # ------------------------------------------------------------------
     # Data Review & Editing Section
     # ------------------------------------------------------------------
     st.markdown("---")
@@ -293,15 +359,6 @@ def main():
         "Inspect the loaded data below. Click **Edit** to modify a table. "
         "Use **Save to Database** to persist changes between sessions."
     )
-
-    # Initialise session-state copies on first load or when source changes
-    if "portfolio_df" not in st.session_state or st.session_state.get("_data_source") != data_source:
-        st.session_state.portfolio_df = portfolio_df.copy()
-        st.session_state.fundamental_df = fundamental_df.copy()
-        st.session_state.target_df = target_df.copy()
-        st.session_state._data_source = data_source
-        # Invalidate cached scores when data source changes
-        st.session_state.pop("scoring_results", None)
 
     # Toggle flags for editing mode
     for _flag in ("edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
@@ -434,7 +491,7 @@ def main():
     col1, col2, col3 = st.columns([2, 1, 2])
     with col1:
         st.info(f"**Data loaded:** {len(portfolio_df)} companies")
-        st.info(f"**Source:** {data_source}")
+        st.info(f"**Source:** {st.session_state.get('_loaded_source', data_source)}")
     with col2:
         st.markdown("")
     with col3:
