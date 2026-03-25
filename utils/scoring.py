@@ -77,9 +77,29 @@ def calculate_temperature_scores(
     Returns:
         DataFrame with amended portfolio including temperature scores
     """
+    # Ensure all prerequisite scopes are present so the ITR library's
+    # _prepare_data / _calculate_s1s2_score don't fail when only a
+    # partial set (e.g. S1 + S1S2 without S2) is requested.
+    _scopes = list(scopes)
+    if EScope.S1S2 in _scopes:
+        if EScope.S1 not in _scopes:
+            _scopes.append(EScope.S1)
+        if EScope.S2 not in _scopes:
+            _scopes.append(EScope.S2)
+    if EScope.S1S2S3 in _scopes:
+        if EScope.S1S2 not in _scopes:
+            _scopes.append(EScope.S1S2)
+        if EScope.S3 not in _scopes:
+            _scopes.append(EScope.S3)
+        # S1S2 was just added, so also ensure S1/S2
+        if EScope.S1 not in _scopes:
+            _scopes.append(EScope.S1)
+        if EScope.S2 not in _scopes:
+            _scopes.append(EScope.S2)
+
     temperature_score = TemperatureScore(
         time_frames=time_frames,
-        scopes=scopes,
+        scopes=_scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
     )
@@ -216,7 +236,7 @@ def get_contributions_per_group(
     # Access the grouped scores from aggregated data
     try:
         tf_key = time_frame.name.lower()
-        scope_key = scope.name.lower()
+        scope_key = scope.name  # Scope keys are uppercase (e.g. S1S2S3)
         
         group_data = aggregated_scores.dict()[tf_key]
         if group_data and scope_key in group_data:

@@ -44,6 +44,7 @@ from utils.scoring import (
     get_aggregated_scores_df,
     calculate_portfolio_coverage,
     collect_company_contributions,
+    get_contributions_per_group,
 )
 from utils.visualization import (
     plot_heatmap,
@@ -75,6 +76,10 @@ st.set_page_config(
 def main():
     """Main application entry point."""
     
+    # Load custom CSS
+    with open("assets/style.css") as css_file:
+        st.markdown(f"<style>{css_file.read()}</style>", unsafe_allow_html=True)
+    
     # Header with logo
     col1, col2 = st.columns([1, 10])
     with col1:
@@ -101,16 +106,20 @@ def main():
         left: 21rem;
         bottom: 0;
         right: 0;
-        background-color: #f8f9fa;
-        border-top: 1px solid #ddd;
+        background-color: #1a1a1a;
+        border-top: 2px solid #5bc5f2;
         padding: 8px 20px;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
         font-size: 0.75em;
-        color: #666;
+        color: #ccc;
         z-index: 999;
         text-align: left;
     }
     .footer strong {
-        color: #333;
+        color: #ffffff;
+    }
+    .footer a {
+        color: #5bc5f2;
     }
     /* Adjust footer when sidebar is collapsed */
     [data-testid="collapsedControl"] ~ div .footer {
@@ -315,20 +324,30 @@ def main():
         
         # Grouping options
         st.markdown("#### Grouping")
-        grouping_options = ["None", "sector", "region", "sector + region"]
-        selected_grouping = st.selectbox(
-            "Group by",
-            options=grouping_options,
+        geo_options = ["None", "region", "country"]
+        selected_geo = st.selectbox(
+            "Geographic grouping",
+            options=geo_options,
             index=0,
-            help="Group companies for analysis"
+            help="Group companies by region or country (shown on Y-axis of heatmap)"
+        )
+        sector_options = ["None", "sector", "industry_level_1"]
+        selected_sector_group = st.selectbox(
+            "Sector grouping",
+            options=sector_options,
+            index=0,
+            help="Group companies by sector or industry (shown on X-axis of heatmap)"
         )
         
-        if selected_grouping == "None":
-            grouping = None
-        elif selected_grouping == "sector + region":
-            grouping = ["sector", "region"]
-        else:
-            grouping = [selected_grouping]
+        # Build the grouping list: geographic axis first (y-axis), sector axis second (x-axis)
+        grouping = None
+        _grouping_parts = []
+        if selected_geo != "None":
+            _grouping_parts.append(selected_geo)
+        if selected_sector_group != "None":
+            _grouping_parts.append(selected_sector_group)
+        if _grouping_parts:
+            grouping = _grouping_parts
     
     # ------------------------------------------------------------------
     # Guard: show landing page if no data loaded yet
@@ -681,16 +700,86 @@ def main():
             analysis_time_frame = timeframe_options[analysis_tf]
             analysis_scope_val = scope_options[analysis_scope]
 
-            # Heatmap
-            st.subheader("Temperature Score Heatmap")
-            heatmap_fig = plot_heatmap(
+            _sector_columns = {"sector", "industry_level_1"}
+            _is_sector_only = len(grouping) == 1 and grouping[0] in _sector_columns
+
+            if _is_sector_only:
+                # --- Sector-only grouping: rich pie + bar charts ---------------
+                st.subheader("Sector Statistics")
+                contributions = collect_company_contributions(
+                    aggregated_portfolio=aggregated_scores,
+                    amended_portfolio=amended_portfolio,
+                    time_frame=analysis_time_frame,
+                    scope=analysis_scope_val,
+                )
+
+                if not contributions.empty and grouping[0] in contributions.columns:
+                    pie_fig, bar_fig = plot_sector_statistics(
+                        contributions, sector_column=grouping[0]
+                    )
+                    st.plotly_chart(pie_fig, width="stretch")
+                    st.plotly_chart(bar_fig, width="stretch")
+                else:
+                    st.info("No sector data available for the selected parameters.")
+            else:
+                # --- Two-axis or geo-only: heatmap / bar chart -----------------
+                st.subheader("Temperature Score Heatmap")
+                heatmap_fig = plot_heatmap(
+                    aggregated_scores=aggregated_scores,
+                    time_frame=analysis_time_frame,
+                    scope=analysis_scope_val,
+                    grouping=grouping,
+                    title=f"Temperature Scores - {analysis_tf} / {analysis_scope}"
+                )
+                st.plotly_chart(heatmap_fig, width="stretch")
+
+            # --- Group Drill-Down -------------------------------------------
+            st.subheader("Group Drill-Down")
+            st.caption("Select a specific group to see company-level contributions.")
+
+            drill_cols = st.columns(len(grouping))
+            drill_selections = []
+            for idx, g_col in enumerate(grouping):
+                unique_vals = sorted(
+                    fundamental_df[g_col].dropna().unique().tolist()
+                )
+                label_map = {
+                    'region': 'Region',
+                    'country': 'Country',
+                    'sector': 'Sector',
+                    'industry_level_1': 'Industry',
+                }
+                with drill_cols[idx]:
+                    sel = st.selectbox(
+                        label_map.get(g_col, g_col.title()),
+                        options=unique_vals,
+                        key=f"drill_{g_col}",
+                    )
+                    drill_selections.append(sel)
+
+            # Build the group key in the same order as the grouping list
+            group_key = "-".join(drill_selections)
+
+            group_contrib = get_contributions_per_group(
                 aggregated_scores=aggregated_scores,
                 time_frame=analysis_time_frame,
                 scope=analysis_scope_val,
-                grouping=grouping,
-                title=f"Temperature Scores - {analysis_tf} / {analysis_scope}"
+                group_name=group_key,
             )
-            st.plotly_chart(heatmap_fig, width="stretch")
+
+            if not group_contrib.empty:
+                display_cols = [
+                    c for c in ['company_name', 'company_id', 'temperature_score', 'contribution_relative']
+                    if c in group_contrib.columns
+                ]
+                st.dataframe(
+                    group_contrib[display_cols].round(2),
+                    width="stretch",
+                    hide_index=True,
+                )
+            else:
+                st.info(f"No companies found for group **{group_key}**.")
+
         else:
             st.info("💡 Select a grouping option in the sidebar to see hotspot analysis by sector, region, etc.")
 
@@ -849,22 +938,34 @@ def main():
             )
 
             if not candidates.empty:
+                # Build display labels with impact score, sorted by descending impact
+                candidates = candidates.sort_values('impact_score', ascending=False)
+                total_impact = candidates['impact_score'].sum()
+                candidates['impact_pct'] = (
+                    (candidates['impact_score'] / total_impact * 100) if total_impact > 0 else 0
+                ).round(1)
+                candidates['display_label'] = (
+                    candidates['company_name'] + '  (' + candidates['impact_pct'].astype(str) + '% impact)'
+                )
+
                 # Multi-select for companies
-                company_options = candidates['company_name'].tolist()
-                selected_companies = st.multiselect(
+                company_options = candidates['display_label'].tolist()
+                selected_labels = st.multiselect(
                     "Select Companies to Engage",
                     options=company_options,
                     default=company_options[:3] if len(company_options) >= 3 else company_options,
-                    help="Choose companies to include in the engagement scenario"
+                    help="Companies sorted by descending impact on portfolio score"
                 )
 
-                # Get company IDs for selected companies
+                # Get company IDs for selected labels
                 engagement_ids = candidates[
-                    candidates['company_name'].isin(selected_companies)
+                    candidates['display_label'].isin(selected_labels)
                 ]['company_id'].tolist()
 
                 st.dataframe(
-                    candidates[candidates['company_name'].isin(selected_companies)],
+                    candidates[candidates['display_label'].isin(selected_labels)].drop(
+                        columns=['display_label', 'impact_pct']
+                    ),
                     width="stretch",
                     height=200
                 )

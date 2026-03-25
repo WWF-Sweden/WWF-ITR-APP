@@ -1,0 +1,128 @@
+/* =============================================================
+   WWF ITR Tool – Custom Stylesheet
+   Inspired by academy.wwf.se design language
+   ============================================================= */
+
+/* ---- Global typography ---- */
+html, body, [class*="css"] {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* ---- Headings ---- */
+h1, h2, h3,
+[data-testid="stHeadingWithActionElements"] {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    color: #1a1a1a;
+    letter-spacing: 0.02em;
+}
+
+h1 {
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+h2 {
+    font-weight: 600;
+}
+
+/* ---- Primary buttons ---- */
+.stButton > button[kind="primary"],
+.stButton > button[data-testid="stBaseButton-primary"] {
+    background-color: #5bc5f2;
+    border: none;
+    color: #ffffff;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-radius: 4px;
+    padding: 0.5rem 1.5rem;
+    transition: background-color 0.2s ease;
+}
+
+.stButton > button[kind="primary"]:hover,
+.stButton > button[data-testid="stBaseButton-primary"]:hover {
+    background-color: #3ab0e0;
+    color: #ffffff;
+}
+
+/* Secondary / default buttons */
+.stButton > button {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+}
+
+/* ---- Links ---- */
+a {
+    color: #5bc5f2;
+}
+
+a:hover {
+    color: #3ab0e0;
+}
+
+/* ---- Tabs ---- */
+.stTabs [data-baseweb="tab"] {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.stTabs [aria-selected="true"] {
+    border-bottom-color: #5bc5f2 !important;
+    color: #5bc5f2 !important;
+}
+
+/* ---- Metrics ---- */
+[data-testid="stMetricValue"] {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 700;
+    color: #1a1a1a;
+}
+
+[data-testid="stMetricLabel"] {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.8rem;
+    color: #555;
+}
+
+/* ---- Data tables ---- */
+[data-testid="stDataFrame"] {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+}
+
+/* ---- Expanders ---- */
+.streamlit-expanderHeader {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+/* ---- Footer (styled in app.py, reinforced here) ---- */
+.footer {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* ---- Download buttons ---- */
+.stDownloadButton > button {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* ---- Selectbox / multiselect inside main area ---- */
+.stSelectbox label,
+.stMultiSelect label {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 600;
+}
+
+/* ---- Padding at bottom to avoid footer overlap ---- */
+.main .block-container {
+    padding-bottom: 4rem;
+}

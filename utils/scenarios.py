@@ -118,9 +118,28 @@ def run_scenario_analysis(
     # NOTE: scenario must be passed to the constructor (not set afterwards)
     # because ScenarioType.TARGETS modifies self.default_score during
     # __init__ — assigning the scenario after construction misses this.
+    #
+    # Ensure all prerequisite scopes are present so the ITR library's
+    # _prepare_data / _calculate_s1s2_score don't fail on partial scope sets.
+    _scopes = list(scopes)
+    if EScope.S1S2 in _scopes:
+        if EScope.S1 not in _scopes:
+            _scopes.append(EScope.S1)
+        if EScope.S2 not in _scopes:
+            _scopes.append(EScope.S2)
+    if EScope.S1S2S3 in _scopes:
+        if EScope.S1S2 not in _scopes:
+            _scopes.append(EScope.S1S2)
+        if EScope.S3 not in _scopes:
+            _scopes.append(EScope.S3)
+        if EScope.S1 not in _scopes:
+            _scopes.append(EScope.S1)
+        if EScope.S2 not in _scopes:
+            _scopes.append(EScope.S2)
+
     temperature_score = TemperatureScore(
         time_frames=time_frames,
-        scopes=scopes,
+        scopes=_scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
         scenario=scenario,

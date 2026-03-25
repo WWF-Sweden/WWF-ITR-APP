@@ -34,7 +34,15 @@ def plot_heatmap(
     """
     try:
         tf_key = time_frame.name.lower()
-        scope_key = scope.name.lower()
+        scope_key = scope.name  # Scope keys are uppercase (e.g. S1S2S3)
+        
+        # Display name mapping for axis labels
+        _label_map = {
+            'sector': 'Sector',
+            'region': 'Region',
+            'country': 'Country',
+            'industry_level_1': 'Industry',
+        }
         
         # Extract grouped data
         data = aggregated_scores.dict()
@@ -71,30 +79,43 @@ def plot_heatmap(
                 aggfunc='mean'
             )
             
-            fig = px.imshow(
-                pivot,
-                labels=dict(x=grouping[1], y=grouping[0], color="Temperature (°C)"),
-                color_continuous_scale='RdYlGn_r',
-                aspect='auto',
-                title=title,
-            )
+            # Build heatmap with go.Heatmap so we can style NaN cells grey
+            fig = go.Figure(data=go.Heatmap(
+                z=pivot.values,
+                x=pivot.columns.tolist(),
+                y=pivot.index.tolist(),
+                colorscale='RdYlGn_r',
+                zmin=1.5,
+                zmax=3.4,
+                colorbar=dict(title="Temperature (°C)"),
+                hoverongaps=False,
+                texttemplate="%{z:.2f}",
+            ))
+            # Grey background for NaN cells
             fig.update_layout(
-                xaxis_title=grouping[1].title(),
-                yaxis_title=grouping[0].title(),
+                title=title,
+                xaxis_title=_label_map.get(grouping[1], grouping[1].title()),
+                yaxis_title=_label_map.get(grouping[0], grouping[0].title()),
+                plot_bgcolor='lightgrey',
             )
         else:
             # Single grouping - create bar chart instead
+            sorted_df = df.sort_values('score', ascending=False)
             fig = px.bar(
-                df.sort_values('score', ascending=False),
+                sorted_df,
                 x=grouping[0],
                 y='score',
                 color='score',
                 color_continuous_scale='RdYlGn_r',
+                range_color=[1.5, 3.4],
                 title=title,
+                text=sorted_df['score'].round(2),
             )
+            fig.update_traces(textposition='outside')
             fig.update_layout(
-                xaxis_title=grouping[0].title(),
+                xaxis_title=_label_map.get(grouping[0], grouping[0].title()),
                 yaxis_title="Temperature Score (°C)",
+                yaxis=dict(range=[0, 4.0]),
             )
         
         return fig
@@ -171,9 +192,12 @@ def plot_sector_statistics(
         y='temperature_score',
         color='temperature_score',
         color_continuous_scale='RdYlGn_r',
+        range_color=[1.5, 3.4],
         title=f"{title} - Temperature Scores by Sector",
         labels={'temperature_score': 'Temperature Score (°C)'},
+        text=sector_agg_sorted['temperature_score'].round(2),
     )
+    fig_bar.update_traces(textposition='outside')
     
     # Add reference line at 2.0°C
     fig_bar.add_hline(
@@ -190,6 +214,8 @@ def plot_sector_statistics(
         line_color="green",
         annotation_text="1.5°C Target"
     )
+    
+    fig_bar.update_layout(yaxis=dict(range=[0, 4.0]))
     
     return fig_pie, fig_bar
 
