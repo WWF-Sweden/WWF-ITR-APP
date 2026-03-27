@@ -33,7 +33,6 @@ from utils.data_loader import (
     load_data_from_db,
     get_saved_datasets,
     delete_saved_dataset,
-    _drop_empty_rows,
 )
 from db.database import init_db
 from utils.scoring import (
@@ -401,8 +400,9 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_portfolio"):
-                    _cleaned = _drop_empty_rows(edited_portfolio)
-                    _dropped = len(edited_portfolio) - len(_cleaned)
+                    _mask = edited_portfolio["company_id"].isna() | (edited_portfolio["company_id"].astype(str).str.strip() == "")
+                    _cleaned = edited_portfolio[~_mask].reset_index(drop=True)
+                    _dropped = _mask.sum()
                     if _dropped > 0:
                         st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
                     st.session_state.portfolio_df = _cleaned
@@ -431,8 +431,9 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_fundamental"):
-                    _cleaned = _drop_empty_rows(edited_fundamental)
-                    _dropped = len(edited_fundamental) - len(_cleaned)
+                    _mask = edited_fundamental["company_id"].isna() | (edited_fundamental["company_id"].astype(str).str.strip() == "")
+                    _cleaned = edited_fundamental[~_mask].reset_index(drop=True)
+                    _dropped = _mask.sum()
                     if _dropped > 0:
                         st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
                     st.session_state.fundamental_df = _cleaned
@@ -461,8 +462,9 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_target"):
-                    _cleaned = _drop_empty_rows(edited_target)
-                    _dropped = len(edited_target) - len(_cleaned)
+                    _mask = edited_target["company_id"].isna() | (edited_target["company_id"].astype(str).str.strip() == "")
+                    _cleaned = edited_target[~_mask].reset_index(drop=True)
+                    _dropped = _mask.sum()
                     if _dropped > 0:
                         st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
                     st.session_state.target_df = _cleaned
