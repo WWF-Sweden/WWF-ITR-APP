@@ -390,6 +390,8 @@ def main():
 
     with edit_tab1:
         st.markdown(f"**{len(st.session_state.portfolio_df)} companies** in portfolio")
+        if st.session_state.get("portfolio_dropped_warning"):
+            st.warning(st.session_state.pop("portfolio_dropped_warning"))
         if st.session_state.edit_portfolio_mode:
             edited_portfolio = st.data_editor(
                 st.session_state.portfolio_df,
@@ -400,11 +402,16 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_portfolio"):
-                    _mask = edited_portfolio["company_id"].isna() | (edited_portfolio["company_id"].astype(str).str.strip() == "")
-                    _cleaned = edited_portfolio[~_mask].reset_index(drop=True)
-                    _dropped = _mask.sum()
+                    _required = [c for c in ["company_id", "company_name", "investment_value"] if c in edited_portfolio.columns]
+                    _incomplete = pd.Series(False, index=edited_portfolio.index)
+                    for _col in _required:
+                        _incomplete |= edited_portfolio[_col].isna() | (edited_portfolio[_col].astype(str).str.strip() == "")
+                    _cleaned = edited_portfolio[~_incomplete].reset_index(drop=True)
+                    _dropped = _incomplete.sum()
                     if _dropped > 0:
-                        st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
+                        st.session_state["portfolio_dropped_warning"] = (
+                            f"Removed {_dropped} incomplete row(s) missing company_id, company_name, or investment_value."
+                        )
                     st.session_state.portfolio_df = _cleaned
                     st.session_state.edit_portfolio_mode = False
                     st.session_state.pop("scoring_results", None)

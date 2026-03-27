@@ -23,11 +23,25 @@ from db.database import (
 )
 
 
+_PORTFOLIO_REQUIRED_COLS = ["company_id", "company_name", "investment_value"]
+
+
 def _drop_empty_rows(df: pd.DataFrame, key_col: str = "company_id") -> pd.DataFrame:
-    """Drop rows where key_col is NaN or an empty/whitespace-only string."""
+    """Drop rows missing key_col (NaN or empty string). Used for fundamentals/targets."""
     if key_col not in df.columns:
         return df
     mask = df[key_col].isna() | (df[key_col].astype(str).str.strip() == "")
+    return df[~mask].reset_index(drop=True)
+
+
+def _drop_incomplete_portfolio_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop portfolio rows that are missing any required field (company_id, company_name, investment_value)."""
+    present = [c for c in _PORTFOLIO_REQUIRED_COLS if c in df.columns]
+    if not present:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for col in present:
+        mask |= df[col].isna() | (df[col].astype(str).str.strip() == "")
     return df[~mask].reset_index(drop=True)
 
 
@@ -133,7 +147,7 @@ def convert_portfolio_to_companies(portfolio_df: pd.DataFrame) -> list:
     Returns:
         List of PortfolioCompany objects
     """
-    return ITR.utils.dataframe_to_portfolio(_drop_empty_rows(portfolio_df))
+    return ITR.utils.dataframe_to_portfolio(_drop_incomplete_portfolio_rows(portfolio_df))
 
 
 def validate_portfolio_data(portfolio_df: pd.DataFrame) -> Tuple[bool, list]:
