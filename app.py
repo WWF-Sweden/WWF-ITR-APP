@@ -33,6 +33,7 @@ from utils.data_loader import (
     load_data_from_db,
     get_saved_datasets,
     delete_saved_dataset,
+    _drop_empty_rows,
 )
 from db.database import init_db
 from utils.scoring import (
@@ -400,7 +401,11 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_portfolio"):
-                    st.session_state.portfolio_df = edited_portfolio.copy()
+                    _cleaned = _drop_empty_rows(edited_portfolio)
+                    _dropped = len(edited_portfolio) - len(_cleaned)
+                    if _dropped > 0:
+                        st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
+                    st.session_state.portfolio_df = _cleaned
                     st.session_state.edit_portfolio_mode = False
                     st.session_state.pop("scoring_results", None)
                     st.rerun()
@@ -426,7 +431,11 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_fundamental"):
-                    st.session_state.fundamental_df = edited_fundamental.copy()
+                    _cleaned = _drop_empty_rows(edited_fundamental)
+                    _dropped = len(edited_fundamental) - len(_cleaned)
+                    if _dropped > 0:
+                        st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
+                    st.session_state.fundamental_df = _cleaned
                     st.session_state.edit_fundamental_mode = False
                     st.session_state.pop("scoring_results", None)
                     st.rerun()
@@ -452,7 +461,11 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_target"):
-                    st.session_state.target_df = edited_target.copy()
+                    _cleaned = _drop_empty_rows(edited_target)
+                    _dropped = len(edited_target) - len(_cleaned)
+                    if _dropped > 0:
+                        st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
+                    st.session_state.target_df = _cleaned
                     st.session_state.edit_target_mode = False
                     st.session_state.pop("scoring_results", None)
                     st.rerun()

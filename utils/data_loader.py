@@ -23,6 +23,14 @@ from db.database import (
 )
 
 
+def _drop_empty_rows(df: pd.DataFrame, key_col: str = "company_id") -> pd.DataFrame:
+    """Drop rows where key_col is NaN or an empty/whitespace-only string."""
+    if key_col not in df.columns:
+        return df
+    mask = df[key_col].isna() | (df[key_col].astype(str).str.strip() == "")
+    return df[~mask].reset_index(drop=True)
+
+
 @st.cache_data(show_spinner="Loading sample data...")
 def download_sample_data(data_dir: str = "data") -> Tuple[str, str]:
     """
@@ -80,7 +88,7 @@ def load_portfolio_data(file_path: str) -> pd.DataFrame:
     Returns:
         DataFrame with portfolio data
     """
-    return pd.read_csv(file_path, encoding="iso-8859-1")
+    return _drop_empty_rows(pd.read_csv(file_path, encoding="iso-8859-1"))
 
 def load_uploaded_provider_file(uploaded_file):
     """Save uploaded provider file to temporary location."""
@@ -106,7 +114,7 @@ def load_uploaded_portfolio_file(uploaded_file):
             df = pd.read_csv(tmp_path)
         else:
             df = pd.read_excel(tmp_path)
-        return df
+        return _drop_empty_rows(df)
     except Exception as e:
         logger.error(f"Error reading uploaded portfolio file: {e}")
         raise
@@ -125,7 +133,7 @@ def convert_portfolio_to_companies(portfolio_df: pd.DataFrame) -> list:
     Returns:
         List of PortfolioCompany objects
     """
-    return ITR.utils.dataframe_to_portfolio(portfolio_df)
+    return ITR.utils.dataframe_to_portfolio(_drop_empty_rows(portfolio_df))
 
 
 def validate_portfolio_data(portfolio_df: pd.DataFrame) -> Tuple[bool, list]:
