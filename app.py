@@ -441,7 +441,7 @@ def main():
                     _cleaned, _dropped = clean_fundamental_df(edited_fundamental)
                     if _dropped > 0:
                         st.session_state["fundamental_dropped_warning"] = (
-                            f"Removed {_dropped} invalid row(s) (missing company_id, company_name, or isic)."
+                            f"Removed {_dropped} invalid row(s) (missing company_id or company_name)."
                         )
                     st.session_state.fundamental_df = _cleaned
                     st.session_state.edit_fundamental_mode = False

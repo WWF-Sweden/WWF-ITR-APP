@@ -58,7 +58,8 @@ def clean_portfolio_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
 def clean_fundamental_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     """Validate and clean a fundamentals DataFrame.
 
-    - Drops rows missing any required string field (company_id, company_name, isic).
+    - Drops rows missing company_id or company_name (the row identifiers).
+    - Fills NaN in isic and other string fields with '' (matching ExcelProvider behaviour).
     - Coerces numeric columns to float so Pydantic won't reject junk text.
 
     Returns:
@@ -67,11 +68,18 @@ def clean_fundamental_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     if df.empty:
         return df, 0
     invalid = pd.Series(False, index=df.index)
-    # Required string fields for IDataProviderCompany
-    for col in ("company_id", "company_name", "isic"):
+    # Only drop rows missing the two key identifiers
+    for col in ("company_id", "company_name"):
         if col in df.columns:
             invalid |= df[col].isna() | (df[col].astype(str).str.strip() == "")
     cleaned = df[~invalid].reset_index(drop=True)
+    # Fill NaN in string fields with '' (ExcelProvider does the same before Pydantic validation)
+    _string_cols = ["isic", "country", "region", "sector",
+                    "industry_level_1", "industry_level_2",
+                    "industry_level_3", "industry_level_4"]
+    for col in _string_cols:
+        if col in cleaned.columns:
+            cleaned[col] = cleaned[col].fillna("")
     # Coerce numeric columns — turn junk text into NaN (Pydantic accepts NaN for Optional[float])
     _numeric_cols = [
         "ghg_s1", "ghg_s2", "ghg_s1s2", "ghg_s3",
