@@ -308,7 +308,22 @@ def create_provider_from_dataframes(
         with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
             fundamental_df.to_excel(writer, sheet_name="fundamental_data", index=False)
             target_df.to_excel(writer, sheet_name="target_data", index=False)
-        return ExcelProvider(path=tmp_path)
+        provider = ExcelProvider(path=tmp_path)
+
+        # Excel round-trip converts "" → empty cell → NaN.  ExcelProvider's
+        # get_company_data fills *most* string columns but misses 'region'.
+        # Patch all string fields so Pydantic doesn't reject NaN-as-float.
+        _str_cols = [
+            "isic", "country", "region", "sector",
+            "industry_level_1", "industry_level_2",
+            "industry_level_3", "industry_level_4",
+        ]
+        fund = provider.data["fundamental_data"]
+        for col in _str_cols:
+            if col in fund.columns:
+                fund[col] = fund[col].fillna("")
+
+        return provider
     finally:
         # ExcelProvider reads everything into memory, so we can clean up
         if os.path.exists(tmp_path):
