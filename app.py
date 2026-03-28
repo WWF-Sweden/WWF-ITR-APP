@@ -33,6 +33,7 @@ from utils.data_loader import (
     load_data_from_db,
     get_saved_datasets,
     delete_saved_dataset,
+    clean_portfolio_df,
 )
 from db.database import init_db
 from utils.scoring import (
@@ -402,15 +403,10 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_portfolio"):
-                    _required = [c for c in ["company_id", "company_name", "investment_value"] if c in edited_portfolio.columns]
-                    _incomplete = pd.Series(False, index=edited_portfolio.index)
-                    for _col in _required:
-                        _incomplete |= edited_portfolio[_col].isna() | (edited_portfolio[_col].astype(str).str.strip() == "")
-                    _cleaned = edited_portfolio[~_incomplete].reset_index(drop=True)
-                    _dropped = _incomplete.sum()
+                    _cleaned, _dropped = clean_portfolio_df(edited_portfolio)
                     if _dropped > 0:
                         st.session_state["portfolio_dropped_warning"] = (
-                            f"Removed {_dropped} incomplete row(s) missing company_id, company_name, or investment_value."
+                            f"Removed {_dropped} incomplete row(s) (missing company_id, company_name, or valid investment_value)."
                         )
                     st.session_state.portfolio_df = _cleaned
                     st.session_state.edit_portfolio_mode = False

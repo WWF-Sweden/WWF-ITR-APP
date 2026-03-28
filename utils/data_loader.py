@@ -34,15 +34,25 @@ def _drop_empty_rows(df: pd.DataFrame, key_col: str = "company_id") -> pd.DataFr
     return df[~mask].reset_index(drop=True)
 
 
-def _drop_incomplete_portfolio_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop portfolio rows that are missing any required field (company_id, company_name, investment_value)."""
-    present = [c for c in _PORTFOLIO_REQUIRED_COLS if c in df.columns]
-    if not present:
-        return df
-    mask = pd.Series(False, index=df.index)
-    for col in present:
-        mask |= df[col].isna() | (df[col].astype(str).str.strip() == "")
-    return df[~mask].reset_index(drop=True)
+def clean_portfolio_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+    """Drop portfolio rows that are missing or have invalid required fields.
+
+    Returns:
+        Tuple of (cleaned DataFrame, number of rows dropped).
+    """
+    if df.empty:
+        return df, 0
+    invalid = pd.Series(False, index=df.index)
+    # String columns: must not be NaN or blank
+    for col in ("company_id", "company_name"):
+        if col in df.columns:
+            invalid |= df[col].isna() | (df[col].astype(str).str.strip() == "")
+    # Numeric column: must be a positive number
+    if "investment_value" in df.columns:
+        numeric_vals = pd.to_numeric(df["investment_value"], errors="coerce")
+        invalid |= numeric_vals.isna() | (numeric_vals <= 0)
+    cleaned = df[~invalid].reset_index(drop=True)
+    return cleaned, int(invalid.sum())
 
 
 @st.cache_data(show_spinner="Loading sample data...")
@@ -102,7 +112,9 @@ def load_portfolio_data(file_path: str) -> pd.DataFrame:
     Returns:
         DataFrame with portfolio data
     """
-    return _drop_empty_rows(pd.read_csv(file_path, encoding="iso-8859-1"))
+    df = pd.read_csv(file_path, encoding="iso-8859-1")
+    cleaned, _ = clean_portfolio_df(df)
+    return cleaned
 
 def load_uploaded_provider_file(uploaded_file):
     """Save uploaded provider file to temporary location."""
@@ -128,7 +140,8 @@ def load_uploaded_portfolio_file(uploaded_file):
             df = pd.read_csv(tmp_path)
         else:
             df = pd.read_excel(tmp_path)
-        return _drop_empty_rows(df)
+        cleaned, _ = clean_portfolio_df(df)
+        return cleaned
     except Exception as e:
         logger.error(f"Error reading uploaded portfolio file: {e}")
         raise
@@ -147,7 +160,8 @@ def convert_portfolio_to_companies(portfolio_df: pd.DataFrame) -> list:
     Returns:
         List of PortfolioCompany objects
     """
-    return ITR.utils.dataframe_to_portfolio(_drop_incomplete_portfolio_rows(portfolio_df))
+    cleaned, _ = clean_portfolio_df(portfolio_df)
+    return ITR.utils.dataframe_to_portfolio(cleaned)
 
 
 def validate_portfolio_data(portfolio_df: pd.DataFrame) -> Tuple[bool, list]:
