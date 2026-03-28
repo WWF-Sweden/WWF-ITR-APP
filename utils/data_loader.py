@@ -55,6 +55,62 @@ def clean_portfolio_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     return cleaned, int(invalid.sum())
 
 
+def clean_fundamental_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+    """Validate and clean a fundamentals DataFrame.
+
+    - Drops rows missing any required string field (company_id, company_name, isic).
+    - Coerces numeric columns to float so Pydantic won't reject junk text.
+
+    Returns:
+        Tuple of (cleaned DataFrame, number of rows dropped).
+    """
+    if df.empty:
+        return df, 0
+    invalid = pd.Series(False, index=df.index)
+    # Required string fields for IDataProviderCompany
+    for col in ("company_id", "company_name", "isic"):
+        if col in df.columns:
+            invalid |= df[col].isna() | (df[col].astype(str).str.strip() == "")
+    cleaned = df[~invalid].reset_index(drop=True)
+    # Coerce numeric columns — turn junk text into NaN (Pydantic accepts NaN for Optional[float])
+    _numeric_cols = [
+        "ghg_s1", "ghg_s2", "ghg_s1s2", "ghg_s3",
+        "company_revenue", "company_market_cap",
+        "company_enterprise_value", "company_total_assets",
+        "company_cash_equivalents",
+    ] + [f"ghg_s3_{i}" for i in range(1, 16)]
+    for col in _numeric_cols:
+        if col in cleaned.columns:
+            cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
+    return cleaned, int(invalid.sum())
+
+
+def clean_target_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+    """Validate and clean a targets DataFrame.
+
+    - Drops rows missing required string fields (company_id, target_type, scope).
+    - Coerces required integer fields (base_year, end_year) and drops rows
+      where they are not valid integers.
+
+    Returns:
+        Tuple of (cleaned DataFrame, number of rows dropped).
+    """
+    if df.empty:
+        return df, 0
+    invalid = pd.Series(False, index=df.index)
+    # Required string fields for IDataProviderTarget
+    for col in ("company_id", "target_type", "scope"):
+        if col in df.columns:
+            invalid |= df[col].isna() | (df[col].astype(str).str.strip() == "")
+    # Required integer fields
+    for col in ("base_year", "end_year"):
+        if col in df.columns:
+            numeric_vals = pd.to_numeric(df[col], errors="coerce")
+            invalid |= numeric_vals.isna()
+    cleaned = df[~invalid].reset_index(drop=True)
+    return cleaned, int(invalid.sum())
+
+
 @st.cache_data(show_spinner="Loading sample data...")
 def download_sample_data(data_dir: str = "data") -> Tuple[str, str]:
     """

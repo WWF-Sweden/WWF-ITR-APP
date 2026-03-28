@@ -34,6 +34,8 @@ from utils.data_loader import (
     get_saved_datasets,
     delete_saved_dataset,
     clean_portfolio_df,
+    clean_fundamental_df,
+    clean_target_df,
 )
 from db.database import init_db
 from utils.scoring import (
@@ -424,6 +426,8 @@ def main():
 
     with edit_tab2:
         st.markdown(f"**{len(st.session_state.fundamental_df)} companies** with fundamental data")
+        if st.session_state.get("fundamental_dropped_warning"):
+            st.warning(st.session_state.pop("fundamental_dropped_warning"))
         if st.session_state.edit_fundamental_mode:
             edited_fundamental = st.data_editor(
                 st.session_state.fundamental_df,
@@ -434,11 +438,11 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_fundamental"):
-                    _mask = edited_fundamental["company_id"].isna() | (edited_fundamental["company_id"].astype(str).str.strip() == "")
-                    _cleaned = edited_fundamental[~_mask].reset_index(drop=True)
-                    _dropped = _mask.sum()
+                    _cleaned, _dropped = clean_fundamental_df(edited_fundamental)
                     if _dropped > 0:
-                        st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
+                        st.session_state["fundamental_dropped_warning"] = (
+                            f"Removed {_dropped} invalid row(s) (missing company_id, company_name, or isic)."
+                        )
                     st.session_state.fundamental_df = _cleaned
                     st.session_state.edit_fundamental_mode = False
                     st.session_state.pop("scoring_results", None)
@@ -455,6 +459,8 @@ def main():
 
     with edit_tab3:
         st.markdown(f"**{len(st.session_state.target_df)} targets**")
+        if st.session_state.get("target_dropped_warning"):
+            st.warning(st.session_state.pop("target_dropped_warning"))
         if st.session_state.edit_target_mode:
             edited_target = st.data_editor(
                 st.session_state.target_df,
@@ -465,11 +471,11 @@ def main():
             col_apply, col_cancel = st.columns(2)
             with col_apply:
                 if st.button("✅ Apply changes", key="apply_target"):
-                    _mask = edited_target["company_id"].isna() | (edited_target["company_id"].astype(str).str.strip() == "")
-                    _cleaned = edited_target[~_mask].reset_index(drop=True)
-                    _dropped = _mask.sum()
+                    _cleaned, _dropped = clean_target_df(edited_target)
                     if _dropped > 0:
-                        st.warning(f"Removed {_dropped} empty row(s) with no company_id.")
+                        st.session_state["target_dropped_warning"] = (
+                            f"Removed {_dropped} invalid row(s) (missing company_id, target_type, scope, base_year, or end_year)."
+                        )
                     st.session_state.target_df = _cleaned
                     st.session_state.edit_target_mode = False
                     st.session_state.pop("scoring_results", None)
