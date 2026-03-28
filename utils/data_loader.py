@@ -90,6 +90,11 @@ def clean_fundamental_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     for col in _numeric_cols:
         if col in cleaned.columns:
             cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
+    # Coerce boolean field — junk text becomes default False
+    if "sbti_validated" in cleaned.columns:
+        cleaned["sbti_validated"] = cleaned["sbti_validated"].map(
+            lambda v: bool(v) if isinstance(v, (bool, int, float)) and pd.notna(v) else False
+        )
     return cleaned, int(invalid.sum())
 
 
@@ -297,6 +302,9 @@ def create_provider_from_dataframes(
     tmp_path = tmp.name
     tmp.close()
     try:
+        # Defensive cleaning before writing to Excel for ExcelProvider
+        fundamental_df, _ = clean_fundamental_df(fundamental_df)
+        target_df, _ = clean_target_df(target_df)
         with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
             fundamental_df.to_excel(writer, sheet_name="fundamental_data", index=False)
             target_df.to_excel(writer, sheet_name="target_data", index=False)
