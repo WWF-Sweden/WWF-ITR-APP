@@ -491,9 +491,15 @@ def main():
                 st.rerun()
 
     # Use the (possibly edited) session-state versions going forward
-    portfolio_df = st.session_state.portfolio_df
-    fundamental_df = st.session_state.fundamental_df
-    target_df = st.session_state.target_df
+    # Clean all DataFrames so the UI always shows exactly what the calculation uses
+    portfolio_df, _ = clean_portfolio_df(st.session_state.portfolio_df)
+    st.session_state.portfolio_df = portfolio_df
+
+    fundamental_df, _ = clean_fundamental_df(st.session_state.fundamental_df)
+    st.session_state.fundamental_df = fundamental_df
+
+    target_df, _ = clean_target_df(st.session_state.target_df)
+    st.session_state.target_df = target_df
 
     # -- Save to Database (uses edited data) --------------------------------
     with st.expander("💾 Save data to local database", expanded=False):
