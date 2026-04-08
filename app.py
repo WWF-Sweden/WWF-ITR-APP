@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 import ITR
 from ITR.interfaces import ETimeFrames, EScope
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
+from ITR.configs import PortfolioCoverageTVPConfig
 
 # Import local utilities
 from utils.data_loader import (
@@ -351,6 +352,76 @@ def main():
             _grouping_parts.append(selected_sector_group)
         if _grouping_parts:
             grouping = _grouping_parts
+
+        # --- SBTi & Coverage Settings ---
+        st.markdown("#### SBTi Settings")
+
+        sbti_factor = st.number_input(
+            "SBTi Factor",
+            min_value=0.0,
+            max_value=2.0,
+            value=1.0,
+            step=0.05,
+            help=(
+                "Blending factor for companies without SBTi-validated targets. "
+                "1.0 = use raw score only (no penalty). "
+                "Values < 1 blend toward the default score for non-validated companies."
+            ),
+        )
+
+        calculate_coverage = st.checkbox(
+            "Calculate portfolio coverage",
+            value=False,
+            help="Run SBTi portfolio coverage analysis (requires CTA file when enabled)",
+        )
+
+        # Only show CTA / offline controls when a CTA file is actually needed
+        _needs_cta = sbti_factor != 1.0 or calculate_coverage
+        cta_file_path = None  # default: auto-download (or not needed)
+
+        if _needs_cta:
+            st.markdown("#### CTA File")
+            cta_source = st.radio(
+                "Companies Taking Action data",
+                options=["Auto-download from SBTi", "Upload custom file"],
+                index=0,
+                help="The CTA file lists companies with validated SBTi targets",
+            )
+
+            if cta_source == "Upload custom file":
+                cta_upload = st.file_uploader(
+                    "Upload CTA Excel file",
+                    type=["xlsx", "xls"],
+                    key="cta_file",
+                )
+                if cta_upload is not None:
+                    import tempfile as _tmpmod
+                    _cta_tmp = _tmpmod.NamedTemporaryFile(delete=False, suffix=".xlsx")
+                    _cta_tmp.write(cta_upload.getvalue())
+                    _cta_tmp.close()
+                    cta_file_path = _cta_tmp.name
+                else:
+                    st.warning("⚠️ Please upload a CTA file or switch to auto-download")
+
+            offline_mode = st.checkbox(
+                "Offline mode",
+                value=False,
+                help=(
+                    "When enabled, uses a cached/bundled CTA file instead of "
+                    "downloading from SBTi. Useful behind firewalls."
+                ),
+            )
+            PortfolioCoverageTVPConfig.OFFLINE = offline_mode
+            import os as _os
+            if offline_mode:
+                _os.environ["ITR_OFFLINE"] = "1"
+            else:
+                _os.environ.pop("ITR_OFFLINE", None)
+        else:
+            # Reset offline state when CTA is not needed
+            PortfolioCoverageTVPConfig.OFFLINE = False
+            import os as _os
+            _os.environ.pop("ITR_OFFLINE", None)
     
     # ------------------------------------------------------------------
     # Guard: show landing page if no data loaded yet
@@ -575,6 +646,9 @@ def main():
         tuple(sc.value for sc in scopes),
         aggregation_method.value if hasattr(aggregation_method, 'value') else str(aggregation_method),
         str(grouping),
+        sbti_factor,
+        cta_file_path,
+        calculate_coverage,
     )
 
     # Reuse cached results when the key hasn't changed
@@ -593,6 +667,8 @@ def main():
                 scopes=scopes,
                 aggregation_method=aggregation_method,
                 grouping=grouping,
+                sbti_factor=sbti_factor,
+                cta_file_path=cta_file_path,
             )
 
             aggregated_scores = aggregate_portfolio_scores(
@@ -601,9 +677,16 @@ def main():
                 scopes=scopes,
                 aggregation_method=aggregation_method,
                 grouping=grouping,
+                sbti_factor=sbti_factor,
             )
 
-            coverage = calculate_portfolio_coverage(amended_portfolio, aggregation_method)
+            if calculate_coverage:
+                coverage = calculate_portfolio_coverage(
+                    amended_portfolio, aggregation_method,
+                    cta_file_path=cta_file_path,
+                )
+            else:
+                coverage = None
 
             # Persist to session state
             st.session_state.scoring_results = {
@@ -666,7 +749,10 @@ def main():
         with col1:
             st.metric("Portfolio Temperature", f"{portfolio_score:.2f}°C")
         with col2:
-            st.metric("Portfolio Coverage", f"{coverage:.1f}%")
+            if coverage is not None:
+                st.metric("Portfolio Coverage", f"{coverage:.1f}%")
+            else:
+                st.metric("Portfolio Coverage", "N/A")
         with col3:
             st.metric("Companies Analyzed", len(portfolio_df))
         with col4:
@@ -690,7 +776,7 @@ def main():
 
         # Gauge charts
         st.plotly_chart(
-            plot_portfolio_summary_metrics(portfolio_score, coverage),
+            plot_portfolio_summary_metrics(portfolio_score, coverage if coverage is not None else 0),
             width="stretch"
         )
 
@@ -1016,6 +1102,8 @@ def main():
                     scopes=scopes,
                     aggregation_method=aggregation_method,
                     grouping=grouping,
+                    sbti_factor=sbti_factor,
+                    cta_file_path=cta_file_path,
                 )
 
                 # Calculate impact
