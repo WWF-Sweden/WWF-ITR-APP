@@ -377,6 +377,8 @@ def main():
 
         # Only show CTA / offline controls when a CTA file is actually needed
         _needs_cta = sbti_factor != 1.0 or calculate_coverage
+        st.session_state["_prev_needs_cta"] = st.session_state.get("_needs_cta_last", False)
+        st.session_state["_needs_cta_last"] = _needs_cta
         cta_file_path = None  # default: auto-download (or not needed)
 
         if _needs_cta:
@@ -627,6 +629,17 @@ def main():
                 st.session_state.pop("scoring_results", None)
                 st.rerun()
     
+    # When CTA options first become relevant (offline mode, custom file) we must
+    # pause so the user can configure them before the calculation fires.
+    _cta_just_activated = (
+        _needs_cta
+        and not st.session_state.get("_prev_needs_cta", False)
+        and st.session_state.get("scoring_results") is not None
+    )
+    if _cta_just_activated:
+        st.session_state.calculation_run = False
+        st.session_state.pop("scoring_results", None)
+
     if not st.session_state.calculation_run:
         st.warning("⏳ Click **Run Analysis** to calculate temperature scores")
         st.stop()

@@ -7,7 +7,7 @@ import streamlit as st
 from typing import List, Optional
 
 from ITR.temperature_score import TemperatureScore, Scenario, ScenarioType, EngagementType
-from ITR.configs import TemperatureScoreConfig
+from ITR.configs import TemperatureScoreConfig, PortfolioCoverageTVPConfig
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
 from ITR.portfolio_coverage_tvp import PortfolioCoverageTVP
 from ITR.interfaces import ETimeFrames, EScope
@@ -190,10 +190,14 @@ def calculate_portfolio_coverage(
     Returns:
         Coverage percentage
     """
-    cov_kwargs = {}
     if cta_file_path is not None:
-        cov_kwargs["cta_file_path"] = cta_file_path
-    portfolio_coverage_tvp = PortfolioCoverageTVP(**cov_kwargs)
+        class _CustomCTAConfig(PortfolioCoverageTVPConfig):
+            FILE_TARGETS_CUSTOM_PATH = cta_file_path
+            USE_LOCAL_CTA = True
+        config = _CustomCTAConfig
+    else:
+        config = PortfolioCoverageTVPConfig
+    portfolio_coverage_tvp = PortfolioCoverageTVP(config)
     coverage = portfolio_coverage_tvp.get_portfolio_coverage(
         amended_portfolio.copy(),
         aggregation_method
