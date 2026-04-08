@@ -7,6 +7,7 @@ import streamlit as st
 from typing import List, Optional
 
 from ITR.temperature_score import TemperatureScore, Scenario, ScenarioType, EngagementType
+from ITR.configs import TemperatureScoreConfig
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
 from ITR.portfolio_coverage_tvp import PortfolioCoverageTVP
 from ITR.interfaces import ETimeFrames, EScope
@@ -62,6 +63,8 @@ def calculate_temperature_scores(
     scopes: List[EScope],
     aggregation_method: PortfolioAggregationMethod,
     grouping: Optional[List[str]] = None,
+    sbti_factor: float = 1.0,
+    cta_file_path: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Calculate temperature scores for all companies in portfolio.
@@ -97,12 +100,18 @@ def calculate_temperature_scores(
         if EScope.S2 not in _scopes:
             _scopes.append(EScope.S2)
 
-    temperature_score = TemperatureScore(
+    TemperatureScoreConfig.SBTI_FACTOR = sbti_factor
+
+    ts_kwargs = dict(
         time_frames=time_frames,
         scopes=_scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
     )
+    if sbti_factor != 1.0 and cta_file_path is not None:
+        ts_kwargs["cta_file_path"] = cta_file_path
+
+    temperature_score = TemperatureScore(**ts_kwargs)
     
     amended_portfolio = temperature_score.calculate(
         data_providers=[_provider],
@@ -118,6 +127,7 @@ def aggregate_portfolio_scores(
     scopes: List[EScope],
     aggregation_method: PortfolioAggregationMethod,
     grouping: Optional[List[str]] = None,
+    sbti_factor: float = 1.0,
 ):
     """
     Aggregate company scores to portfolio level.
@@ -132,6 +142,8 @@ def aggregate_portfolio_scores(
     Returns:
         ScoreAggregation object with portfolio scores
     """
+    TemperatureScoreConfig.SBTI_FACTOR = sbti_factor
+
     temperature_score = TemperatureScore(
         time_frames=time_frames,
         scopes=scopes,
@@ -165,6 +177,7 @@ def get_aggregated_scores_df(aggregated_scores) -> pd.DataFrame:
 def calculate_portfolio_coverage(
     amended_portfolio: pd.DataFrame,
     aggregation_method: PortfolioAggregationMethod,
+    cta_file_path: Optional[str] = None,
 ) -> float:
     """
     Calculate portfolio coverage (% with SBTi targets).
@@ -172,11 +185,15 @@ def calculate_portfolio_coverage(
     Args:
         amended_portfolio: DataFrame with company scores
         aggregation_method: Aggregation method to use
+        cta_file_path: Optional path to CTA file
         
     Returns:
         Coverage percentage
     """
-    portfolio_coverage_tvp = PortfolioCoverageTVP()
+    cov_kwargs = {}
+    if cta_file_path is not None:
+        cov_kwargs["cta_file_path"] = cta_file_path
+    portfolio_coverage_tvp = PortfolioCoverageTVP(**cov_kwargs)
     coverage = portfolio_coverage_tvp.get_portfolio_coverage(
         amended_portfolio.copy(),
         aggregation_method

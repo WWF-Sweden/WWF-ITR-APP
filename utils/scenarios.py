@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import ITR
 from ITR.temperature_score import TemperatureScore, Scenario, ScenarioType, EngagementType
+from ITR.configs import TemperatureScoreConfig
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
 from ITR.interfaces import ETimeFrames, EScope
 from ITR.data.excel import ExcelProvider
@@ -75,6 +76,8 @@ def run_scenario_analysis(
     scopes: List[EScope],
     aggregation_method: PortfolioAggregationMethod,
     grouping: Optional[List[str]] = None,
+    sbti_factor: float = 1.0,
+    cta_file_path: Optional[str] = None,
 ) -> tuple:
     """
     Run a what-if scenario analysis.
@@ -137,13 +140,19 @@ def run_scenario_analysis(
         if EScope.S2 not in _scopes:
             _scopes.append(EScope.S2)
 
-    temperature_score = TemperatureScore(
+    TemperatureScoreConfig.SBTI_FACTOR = sbti_factor
+
+    ts_kwargs = dict(
         time_frames=time_frames,
         scopes=_scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
         scenario=scenario,
     )
+    if sbti_factor != 1.0 and cta_file_path is not None:
+        ts_kwargs["cta_file_path"] = cta_file_path
+
+    temperature_score = TemperatureScore(**ts_kwargs)
     
     scenario_companies = ITR.utils.dataframe_to_portfolio(scenario_portfolio)
     scenario_scores = temperature_score.calculate(
