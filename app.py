@@ -276,6 +276,8 @@ def main():
                     st.session_state.data_loaded = True
                     # Clear stale scoring results
                     st.session_state.pop("scoring_results", None)
+                    st.session_state.pop("coverage_result", None)
+                    st.session_state.pop("_committed_key", None)
                     st.session_state.pop("calculation_run", None)
                     st.rerun()
 
@@ -486,6 +488,8 @@ def main():
                     st.session_state.portfolio_df = _cleaned
                     st.session_state.edit_portfolio_mode = False
                     st.session_state.pop("scoring_results", None)
+                    st.session_state.pop("coverage_result", None)
+                    st.session_state.pop("_committed_key", None)
                     st.rerun()
             with col_cancel:
                 if st.button("Cancel", key="cancel_portfolio"):
@@ -519,6 +523,8 @@ def main():
                     st.session_state.fundamental_df = _cleaned
                     st.session_state.edit_fundamental_mode = False
                     st.session_state.pop("scoring_results", None)
+                    st.session_state.pop("coverage_result", None)
+                    st.session_state.pop("_committed_key", None)
                     st.rerun()
             with col_cancel:
                 if st.button("Cancel", key="cancel_fundamental"):
@@ -552,6 +558,8 @@ def main():
                     st.session_state.target_df = _cleaned
                     st.session_state.edit_target_mode = False
                     st.session_state.pop("scoring_results", None)
+                    st.session_state.pop("coverage_result", None)
+                    st.session_state.pop("_committed_key", None)
                     st.rerun()
             with col_cancel:
                 if st.button("Cancel", key="cancel_target"):
@@ -622,24 +630,16 @@ def main():
         
         if st.button("▶️ Run Analysis", type="primary", width="stretch"):
             st.session_state.calculation_run = True
+            st.session_state["_committed_key"] = None  # force recalculation
         
         if st.session_state.calculation_run:
             if st.button("🔄 Reset", width="stretch"):
                 st.session_state.calculation_run = False
                 st.session_state.pop("scoring_results", None)
+                st.session_state.pop("coverage_result", None)
+                st.session_state.pop("_committed_key", None)
                 st.rerun()
     
-    # When CTA options first become relevant (offline mode, custom file) we must
-    # pause so the user can configure them before the calculation fires.
-    _cta_just_activated = (
-        _needs_cta
-        and not st.session_state.get("_prev_needs_cta", False)
-        and st.session_state.get("scoring_results") is not None
-    )
-    if _cta_just_activated:
-        st.session_state.calculation_run = False
-        st.session_state.pop("scoring_results", None)
-
     if not st.session_state.calculation_run:
         st.warning("⏳ Click **Run Analysis** to calculate temperature scores")
         st.stop()
@@ -647,10 +647,15 @@ def main():
     st.markdown("---")
 
     # ------------------------------------------------------------------
-    # Build a hashable key from the current analysis parameters so we
-    # can detect when cached results are stale.
+    # Two-level cache:
+    #   _score_key  — covers temperature scores + aggregation (slow).
+    #                 Does NOT include calculate_coverage so toggling the
+    #                 coverage checkbox never forces a full rescore.
+    #   _full_key   — used for the "params changed" guard and the fast
+    #                 coverage cache, so coverage is re-run when its own
+    #                 inputs (aggregation method, cta path, checkbox) change.
     # ------------------------------------------------------------------
-    _scoring_key = (
+    _score_key = (
         portfolio_df.shape,
         tuple(sorted(portfolio_df.columns.tolist())),
         fundamental_df.shape,
@@ -661,17 +666,24 @@ def main():
         str(grouping),
         sbti_factor,
         cta_file_path,
-        calculate_coverage,
     )
+    _full_key = (_score_key, calculate_coverage)
 
-    # Reuse cached results when the key hasn't changed
-    _cached = st.session_state.get("scoring_results")
-    if _cached is not None and _cached.get("key") == _scoring_key:
-        amended_portfolio = _cached["amended_portfolio"]
-        aggregated_scores = _cached["aggregated_scores"]
-        coverage = _cached["coverage"]
+    # If parameters changed since the last committed run, pause and prompt the
+    # user to click Run Analysis again — prevents immediate recalculation on
+    # every sidebar interaction (e.g. clicking sbti_factor +/- multiple times).
+    _committed_key = st.session_state.get("_committed_key")
+    if _committed_key is not None and _committed_key != _full_key:
+        st.session_state.calculation_run = False
+        st.warning("⚙️ Parameters changed — click **▶️ Run Analysis** to recalculate")
+        st.stop()
+
+    # --- Temperature scores + aggregation (expensive) ---
+    _score_cached = st.session_state.get("scoring_results")
+    if _score_cached is not None and _score_cached.get("key") == _score_key:
+        amended_portfolio = _score_cached["amended_portfolio"]
+        aggregated_scores = _score_cached["aggregated_scores"]
     else:
-        # Calculate temperature scores
         with st.spinner("Calculating temperature scores..."):
             amended_portfolio = calculate_temperature_scores(
                 _provider=provider,
@@ -683,7 +695,6 @@ def main():
                 sbti_factor=sbti_factor,
                 cta_file_path=cta_file_path,
             )
-
             aggregated_scores = aggregate_portfolio_scores(
                 amended_portfolio=amended_portfolio,
                 time_frames=time_frames,
@@ -692,22 +703,28 @@ def main():
                 grouping=grouping,
                 sbti_factor=sbti_factor,
             )
+        st.session_state.scoring_results = {
+            "key": _score_key,
+            "amended_portfolio": amended_portfolio,
+            "aggregated_scores": aggregated_scores,
+        }
 
-            if calculate_coverage:
+    # --- Portfolio coverage (fast, separate cache) ---
+    _cov_cached = st.session_state.get("coverage_result")
+    if calculate_coverage:
+        if _cov_cached is not None and _cov_cached.get("key") == _full_key:
+            coverage = _cov_cached["coverage"]
+        else:
+            with st.spinner("Calculating portfolio coverage..."):
                 coverage = calculate_portfolio_coverage(
                     amended_portfolio, aggregation_method,
                     cta_file_path=cta_file_path,
                 )
-            else:
-                coverage = None
+            st.session_state.coverage_result = {"key": _full_key, "coverage": coverage}
+    else:
+        coverage = None
 
-            # Persist to session state
-            st.session_state.scoring_results = {
-                "key": _scoring_key,
-                "amended_portfolio": amended_portfolio,
-                "aggregated_scores": aggregated_scores,
-                "coverage": coverage,
-            }
+    st.session_state["_committed_key"] = _full_key
 
     # Main content tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
