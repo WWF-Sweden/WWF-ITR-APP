@@ -359,7 +359,7 @@ def main():
         sbti_factor = st.number_input(
             "SBTi Factor",
             min_value=0.0,
-            max_value=2.0,
+            max_value=1.0,
             value=1.0,
             step=0.05,
             help=(
