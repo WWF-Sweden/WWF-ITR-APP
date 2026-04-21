@@ -10,6 +10,15 @@
 ## Phase 2 — Dockerized local version
 - [ ] Create `Dockerfile` (Python base, install requirements, copy app)
 - [ ] Create `docker-compose.yml` with volume mount for `data/` (SQLite persistence)
+  ```yaml
+  services:
+    itr:
+      build: .
+      ports:
+        - "8501:8501"
+      volumes:
+        - ./data:/app/data   # persists itr_data.db across container restarts
+  ```
 - [ ] Users run `docker compose up` → app at `localhost:8501`
 - [ ] No data leaves the user's machine
 - [ ] Add usage instructions to README
