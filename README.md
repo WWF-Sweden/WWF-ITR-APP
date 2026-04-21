@@ -69,6 +69,24 @@ utils/
     visualization.py    # Plotly charts
 ```
 
+## Deployment
+
+### Local / Docker (recommended for real data)
+
+All computation runs on the user's own machine. No data is sent externally. SQLite persistence works as intended. See [TODO.md](TODO.md) for the planned Docker setup.
+
+### Streamlit Cloud (demo / sample data only)
+
+The app can be deployed to [Streamlit Cloud](https://streamlit.io/cloud) for demonstration purposes using the built-in sample data. File upload is technically possible but **not recommended for sensitive portfolio data**, as uploaded files are processed on Streamlit's servers (US-based, AWS).
+
+**Important — required environment variable:** When deploying to Streamlit Cloud, set the following environment variable in the app's settings (Streamlit Cloud dashboard → your app → **Settings** → **Environment variables**):
+
+```
+ITR_DEPLOYMENT=cloud
+```
+
+This activates a warning in the UI that informs users their uploaded data will be processed on external servers. Without this variable, the app assumes it is running locally and no warning is shown.
+
 ## License
 
 See [LICENSE](LICENSE).

@@ -18,6 +18,8 @@
         - "8501:8501"
       volumes:
         - ./data:/app/data   # persists itr_data.db across container restarts
+      environment:
+        # No ITR_DEPLOYMENT env var needed — local is the safe default
   ```
 - [ ] Users run `docker compose up` → app at `localhost:8501`
 - [ ] No data leaves the user's machine

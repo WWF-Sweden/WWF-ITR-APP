@@ -5,9 +5,14 @@ Streamlit Application
 This app allows users to analyze portfolios' and companies' GHG emissions
 reduction targets using the CDP-WWF Temperature Scoring Methodology.
 """
+import os
 import streamlit as st
 import pandas as pd
 import logging
+
+# Deployment mode: set ITR_DEPLOYMENT=cloud in Streamlit Cloud environment settings.
+# Absence of the variable is treated as local/safe (pip install, Docker, etc.).
+is_cloud = os.environ.get("ITR_DEPLOYMENT") == "cloud"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -168,6 +173,12 @@ def main():
             _ready_to_load = True
 
         elif data_source == "Upload Custom Data":
+            if is_cloud:
+                st.warning(
+                    "⚠️ **Cloud deployment detected.** Any data you upload will be "
+                    "processed on Streamlit's servers (US-based). For sensitive or "
+                    "confidential portfolio data, use the local Docker installation instead."
+                )
             st.markdown("#### Provider Data (Excel)")
             uploaded_provider = st.file_uploader(
                 "Upload fundamental & target data",
