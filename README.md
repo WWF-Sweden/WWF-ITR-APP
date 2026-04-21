@@ -1,4 +1,4 @@
-# WWF ITR Tool
+# Use the WWF ITR Tool with your browser
 
 A Streamlit web application for analyzing portfolio alignment with climate goals using the [CDP-WWF Temperature Scoring Methodology](https://wwfint.awsassets.panda.org/downloads/cdp-wwf-temperature-scoring-methodology---september-2024.pdf).
 
@@ -20,7 +20,7 @@ A Streamlit web application for analyzing portfolio alignment with climate goals
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_ORG/WWF-ITR-UI.git
+git clone https://github.com/WWF-Sweden/WWF-ITR-APP.git
 cd WWF-ITR-UI
 pip install -r requirements.txt
 ```
