@@ -5,6 +5,7 @@ Streamlit Application
 This app allows users to analyze portfolios' and companies' GHG emissions
 reduction targets using the CDP-WWF Temperature Scoring Methodology.
 """
+import hashlib
 import os
 import streamlit as st
 import pandas as pd
@@ -377,7 +378,7 @@ def main():
             step=0.05,
             help=(
                 "Blending factor for companies without SBTi-validated targets. "
-                "1.0 = use raw score only (no penalty). "
+                "1.0 = all scores calculated from targets regardless of SBTi status. "
                 "Values < 1 blend toward the default score for non-validated companies."
             ),
         )
@@ -666,11 +667,15 @@ def main():
     #                 coverage cache, so coverage is re-run when its own
     #                 inputs (aggregation method, cta path, checkbox) change.
     # ------------------------------------------------------------------
+    def _df_hash(df: pd.DataFrame) -> str:
+        return hashlib.md5(
+            pd.util.hash_pandas_object(df, index=True).values.tobytes()
+        ).hexdigest()
+
+    _data_hash = _df_hash(portfolio_df) + _df_hash(fundamental_df) + _df_hash(target_df)
+
     _score_key = (
-        portfolio_df.shape,
-        tuple(sorted(portfolio_df.columns.tolist())),
-        fundamental_df.shape,
-        target_df.shape,
+        _data_hash,
         tuple(tf.value for tf in time_frames),
         tuple(sc.value for sc in scopes),
         aggregation_method.value if hasattr(aggregation_method, 'value') else str(aggregation_method),
@@ -683,8 +688,10 @@ def main():
     # If parameters changed since the last committed run, pause and prompt the
     # user to click Run Analysis again — prevents immediate recalculation on
     # every sidebar interaction (e.g. clicking sbti_factor +/- multiple times).
+    # Only _score_key is used here — toggling coverage alone does not require
+    # a full rerun since coverage is calculated independently.
     _committed_key = st.session_state.get("_committed_key")
-    if _committed_key is not None and _committed_key != _full_key:
+    if _committed_key is not None and _committed_key != _score_key:
         st.session_state.calculation_run = False
         st.warning("⚙️ Parameters changed — click **▶️ Run Analysis** to recalculate")
         st.stop()
@@ -705,6 +712,7 @@ def main():
                 grouping=grouping,
                 sbti_factor=sbti_factor,
                 cta_file_path=cta_file_path,
+                data_hash=_data_hash,
             )
             aggregated_scores = aggregate_portfolio_scores(
                 amended_portfolio=amended_portfolio,
@@ -735,7 +743,7 @@ def main():
     else:
         coverage = None
 
-    st.session_state["_committed_key"] = _full_key
+    st.session_state["_committed_key"] = _score_key
 
     # Main content tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([

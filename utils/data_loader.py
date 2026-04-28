@@ -138,8 +138,8 @@ def download_sample_data(data_dir: str = "data") -> Tuple[str, str]:
     if not os.path.isdir(data_dir):
         os.makedirs(data_dir)
     
-    provider_path = os.path.join(data_dir, "data_provider_example.xlsx")
-    portfolio_path = os.path.join(data_dir, "example_portfolio.csv")
+    provider_path = os.path.join(data_dir, "data_provider_example2.xlsx")
+    portfolio_path = os.path.join(data_dir, "example_portfolio2.csv")
     
     if not os.path.isfile(provider_path):
         urllib.request.urlretrieve(
