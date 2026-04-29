@@ -65,6 +65,7 @@ def calculate_temperature_scores(
     grouping: Optional[List[str]] = None,
     sbti_factor: float = 1.0,
     cta_file_path: Optional[str] = None,
+    data_hash: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Calculate temperature scores for all companies in portfolio.
