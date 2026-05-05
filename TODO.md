@@ -9,22 +9,25 @@
 
 ## Phase 2 — Dockerized local version
 - [ ] Create `Dockerfile` (Python base, install requirements, copy app)
-- [ ] Create `docker-compose.yml` with volume mount for `data/` (SQLite persistence)
+- [ ] Create `docker-compose.yml` using pre-built image from ghcr.io
   ```yaml
   services:
     itr:
-      build: .
+      image: ghcr.io/wwf-sweden/wwf-itr-app:latest
       ports:
         - "8501:8501"
       volumes:
         - ./data:/app/data   # persists itr_data.db across container restarts
-      environment:
-        # No ITR_DEPLOYMENT env var needed — local is the safe default
+      # No ITR_DEPLOYMENT env var needed — local is the safe default
   ```
-- [ ] Users run `docker compose up` → app at `localhost:8501`
+- [ ] GitHub Actions workflow (`.github/workflows/docker-publish.yml`) already drafted —
+      triggers on `workflow_dispatch` and `v*` tags (not on every push to main)
+- [ ] Set the ghcr.io package visibility to **public** so users can pull without a token
+      (GitHub → your repo → Packages → wwf-itr-app → Package settings → Change visibility)
+- [ ] Users run `docker compose up` → app at `localhost:8501` (no local build needed)
 - [ ] No data leaves the user's machine
-- [ ] Add usage instructions to README
-- [ ] Test on clean machine (no pre-installed dependencies)
+- [ ] Add usage instructions to README (pull image, run compose, open browser)
+- [ ] Test on clean machine (Docker only, no pre-installed Python/dependencies)
 
 ## Phase 3 — Dual deployment
 - [ ] **Streamlit Cloud** (`main` branch) — demo/sample-data mode, no persistent DB
