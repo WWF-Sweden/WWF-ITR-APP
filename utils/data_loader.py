@@ -363,3 +363,98 @@ def get_saved_datasets():
 def delete_saved_dataset(name: str) -> None:
     """Delete a named dataset from the database."""
     delete_dataset(name)
+
+
+# ---------------------------------------------------------------------------
+# Pre-scored data (4b format) — temperature scores already computed by provider
+# ---------------------------------------------------------------------------
+
+_PROVIDER_SCORES_REQUIRED_COLS = [
+    "company_id",
+    "company_name",
+    "investment_value",
+    "scope",
+    "time_frame",
+    "temperature_score",
+]
+
+# All columns that are meaningful for aggregation / grouping / display.
+# Any column in the uploaded file that is NOT in this set is treated as junk
+# (e.g. formula artefacts, unnamed calculation columns) and is dropped.
+_PROVIDER_SCORES_KNOWN_COLS = {
+    # required
+    "company_id", "company_name", "investment_value",
+    "scope", "time_frame", "temperature_score", "temperature_results",
+    # optional grouping / display
+    "company_isin", "company_lei",
+    "isic",
+    "sector", "region", "country",
+    "industry_level_1", "industry_level_2", "industry_level_3", "industry_level_4",
+    # GHG emissions — required by emissions-weighted methods (TETS, MOTS, EOTS, ECOTS, AOTS, ROTS)
+    "ghg_s1", "ghg_s2", "ghg_s1s2", "ghg_s3", "ghg_s1s2s3",
+    # Financial data — required by ownership-weighted methods
+    "company_revenue", "company_market_cap", "company_enterprise_value",
+    "company_total_assets", "company_cash_equivalents",
+    # Scenario analysis
+    "engagement_target",
+}
+
+
+def load_uploaded_provider_scores_file(uploaded_file) -> pd.DataFrame:
+    """
+    Save an uploaded pre-scored Excel file to a temp location, read it,
+    and return the raw DataFrame.
+    """
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
+    try:
+        df = pd.read_excel(tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    return df
+
+
+def validate_provider_scores_data(df: pd.DataFrame) -> Tuple[bool, list]:
+    """
+    Check that a pre-scored DataFrame contains the 6 required columns.
+
+    Returns:
+        Tuple of (is_valid, list of missing column names).
+    """
+    missing = [c for c in _PROVIDER_SCORES_REQUIRED_COLS if c not in df.columns]
+    return len(missing) == 0, missing
+
+
+def prepare_provider_scores_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert a raw pre-scored DataFrame into the format expected by
+    ``TemperatureScore.aggregate_scores()``:
+
+    - ``scope``      → ``EScope`` enum  (e.g. "S1S2" → EScope.S1S2)
+    - ``time_frame`` → ``ETimeFrames`` enum  (e.g. "mid" → ETimeFrames.MID)
+    - ``temperature_results`` column added (set to 0) if not present — required
+      by the ITR aggregation model.
+
+    Args:
+        df: Raw DataFrame loaded from the provider-scores Excel file.
+
+    Returns:
+        Prepared copy ready for ``aggregate_scores()``.
+    """
+    from ITR.interfaces import EScope, ETimeFrames
+
+    df = df.copy()
+
+    # Drop columns that aren't in the known set — removes junk/formula columns
+    # that Excel files often carry to the right of the actual data.
+    df = df[[c for c in df.columns if c in _PROVIDER_SCORES_KNOWN_COLS]]
+
+    df["scope"] = df["scope"].apply(lambda x: EScope[str(x).upper()])
+    df["time_frame"] = df["time_frame"].apply(lambda x: ETimeFrames[str(x).upper()])
+
+    if "temperature_results" not in df.columns:
+        df["temperature_results"] = 0
+
+    return df

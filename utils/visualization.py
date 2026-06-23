@@ -7,121 +7,49 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from typing import List, Optional, Tuple
-
-from ITR.interfaces import ETimeFrames, EScope
+from typing import Optional, Tuple
 
 
 def plot_heatmap(
-    aggregated_scores,
-    time_frame: ETimeFrames,
-    scope: EScope,
-    grouping: List[str],
+    pivot: pd.DataFrame,
+    x_label: str = "X",
+    y_label: str = "Y",
     title: str = "Temperature Score Heatmap",
 ) -> go.Figure:
     """
-    Create a heatmap showing temperature scores by group.
-    
+    Create a heatmap from a pre-computed pivot table of temperature scores.
+
     Args:
-        aggregated_scores: Aggregated portfolio scores
-        time_frame: Timeframe to display
-        scope: Scope to display
-        grouping: List of grouping columns (e.g., ['sector', 'region'])
-        title: Chart title
-        
+        pivot: DataFrame with scores — index = Y-axis categories,
+               columns = X-axis categories, values = temperature scores.
+        x_label: Display label for the X-axis.
+        y_label: Display label for the Y-axis.
+        title: Chart title.
+
     Returns:
-        Plotly Figure object
+        Plotly Figure object.
     """
-    try:
-        tf_key = time_frame.name.lower()
-        scope_key = scope.name  # Scope keys are uppercase (e.g. S1S2S3)
-        
-        # Display name mapping for axis labels
-        _label_map = {
-            'sector': 'Sector',
-            'region': 'Region',
-            'country': 'Country',
-            'industry_level_1': 'Industry',
-        }
-        
-        # Extract grouped data
-        data = aggregated_scores.dict()
-        grouped_data = data.get(tf_key, {}).get(scope_key, {}).get('grouped', {})
-        
-        if not grouped_data:
-            return _empty_figure("No data available for selected parameters")
-        
-        # Parse group names and scores
-        rows = []
-        for group_name, group_info in grouped_data.items():
-            if '-' in group_name and len(grouping) == 2:
-                parts = group_name.rsplit('-', 1)
-                row = {
-                    grouping[0]: parts[0],
-                    grouping[1]: parts[1] if len(parts) > 1 else 'Unknown',
-                    'score': group_info.get('score', np.nan) if group_info else np.nan,
-                }
-            else:
-                row = {
-                    grouping[0]: group_name,
-                    'score': group_info.get('score', np.nan) if group_info else np.nan,
-                }
-            rows.append(row)
-        
-        df = pd.DataFrame(rows)
-        
-        if len(grouping) == 2:
-            # Create pivot table for heatmap
-            pivot = df.pivot_table(
-                index=grouping[0],
-                columns=grouping[1],
-                values='score',
-                aggfunc='mean'
-            )
-            
-            # Build heatmap with go.Heatmap so we can style NaN cells grey
-            fig = go.Figure(data=go.Heatmap(
-                z=pivot.values,
-                x=pivot.columns.tolist(),
-                y=pivot.index.tolist(),
-                colorscale='RdYlGn_r',
-                zmin=1.5,
-                zmax=3.4,
-                colorbar=dict(title="Temperature (°C)"),
-                hoverongaps=False,
-                texttemplate="%{z:.2f}",
-            ))
-            # Grey background for NaN cells
-            fig.update_layout(
-                title=title,
-                xaxis_title=_label_map.get(grouping[1], grouping[1].title()),
-                yaxis_title=_label_map.get(grouping[0], grouping[0].title()),
-                plot_bgcolor='lightgrey',
-            )
-        else:
-            # Single grouping - create bar chart instead
-            sorted_df = df.sort_values('score', ascending=False)
-            fig = px.bar(
-                sorted_df,
-                x=grouping[0],
-                y='score',
-                color='score',
-                color_continuous_scale='RdYlGn_r',
-                range_color=[1.5, 3.4],
-                title=title,
-                text=sorted_df['score'].round(2),
-            )
-            fig.update_traces(textposition='outside')
-            fig.update_layout(
-                xaxis_title=_label_map.get(grouping[0], grouping[0].title()),
-                yaxis_title="Temperature Score (°C)",
-                yaxis=dict(range=[0, 4.0]),
-            )
-        
-        return fig
-        
-    except Exception as e:
-        return _empty_figure(f"Error creating heatmap: {str(e)}")
+    if pivot.empty:
+        return _empty_figure("No data available for selected parameters")
+
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot.values,
+        x=[str(c) for c in pivot.columns.tolist()],
+        y=[str(i) for i in pivot.index.tolist()],
+        colorscale='RdYlGn_r',
+        zmin=1.5,
+        zmax=3.4,
+        colorbar=dict(title="Temperature (°C)"),
+        hoverongaps=False,
+        texttemplate="%{z:.2f}",
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title=x_label,
+        yaxis_title=y_label,
+        plot_bgcolor='lightgrey',
+    )
+    return fig
 
 
 def plot_sector_statistics(

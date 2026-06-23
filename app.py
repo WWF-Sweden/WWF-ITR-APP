@@ -9,6 +9,7 @@ import hashlib
 import os
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import logging
 
 # Deployment mode: set ITR_DEPLOYMENT=cloud in Streamlit Cloud environment settings.
@@ -43,6 +44,9 @@ from utils.data_loader import (
     clean_portfolio_df,
     clean_fundamental_df,
     clean_target_df,
+    load_uploaded_provider_scores_file,
+    validate_provider_scores_data,
+    prepare_provider_scores_df,
 )
 from db.database import init_db
 from utils.scoring import (
@@ -54,11 +58,9 @@ from utils.scoring import (
     get_aggregated_scores_df,
     calculate_portfolio_coverage,
     collect_company_contributions,
-    get_contributions_per_group,
 )
 from utils.visualization import (
     plot_heatmap,
-    plot_sector_statistics,
     plot_company_contributions,
     plot_scenario_comparison,
     plot_portfolio_summary_metrics,
@@ -69,7 +71,6 @@ from utils.scenarios import (
     run_scenario_analysis,
     calculate_scenario_impact,
     get_engagement_candidates,
-    compare_group_scores,
 )
 
 from utils.data_source import select_data_source, validate_data, data_preview
@@ -150,16 +151,17 @@ def main():
         
         data_source = st.radio(
             "Data Source",
-            options=["Sample Data", "Upload Custom Data", "Load from Database"],
+            options=["Sample Data", "Upload Custom Data", "Pre-scored Data (4b format)", "Load from Database"],
             index=0,
-            help="Choose sample data, upload files, or load a previously saved dataset"
+            help="Choose sample data, upload files, upload pre-scored data, or load a previously saved dataset"
         )
         
         # Clear previously loaded data when the user switches source
         if "_data_source" in st.session_state and st.session_state._data_source != data_source:
             for _key in ("data_loaded", "portfolio_df", "fundamental_df", "target_df",
                          "scoring_results", "calculation_run",
-                         "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
+                         "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode",
+                         "provider_scores_df", "data_mode", "ps_aggregation_result"):
                 st.session_state.pop(_key, None)
             st.session_state._data_source = data_source
 
@@ -167,6 +169,7 @@ def main():
         _ready_to_load = False  # tracks whether the Load button should be enabled
         uploaded_provider = None
         uploaded_portfolio = None
+        uploaded_scores = None
         selected_dataset = None
 
         if data_source == "Sample Data":
@@ -200,6 +203,30 @@ def main():
                 _ready_to_load = True
             else:
                 st.warning("⚠️ Please upload both files to continue")
+
+        elif data_source == "Pre-scored Data (4b format)":
+            if is_cloud:
+                st.warning(
+                    "⚠️ **Cloud deployment detected.** Any data you upload will be "
+                    "processed on Streamlit's servers (US-based). For sensitive or "
+                    "confidential portfolio data, use the local Docker installation instead."
+                )
+            st.info(
+                "Upload an Excel file containing pre-computed temperature scores from a "
+                "data provider (the format used in notebook 4b).  "
+                "Required columns: `company_id`, `company_name`, `investment_value`, "
+                "`scope`, `time_frame`, `temperature_score`."
+            )
+            uploaded_scores = st.file_uploader(
+                "Pre-scored portfolio (Excel)",
+                type=["xlsx", "xls"],
+                key="scores_file",
+                help="Excel file with one row per company/scope/timeframe combination",
+            )
+            if uploaded_scores is not None:
+                _ready_to_load = True
+            else:
+                st.warning("⚠️ Please upload the pre-scored Excel file to continue")
 
         else:  # Load from Database
             init_db()
@@ -237,7 +264,8 @@ def main():
             if st.button("🔄 Reload / Change Source", key="reload_data"):
                 for _key in ("data_loaded", "portfolio_df", "fundamental_df", "target_df",
                              "scoring_results", "calculation_run",
-                             "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
+                             "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode",
+                             "provider_scores_df", "data_mode", "ps_aggregation_result"):
                     st.session_state.pop(_key, None)
                 st.rerun()
         else:
@@ -272,6 +300,22 @@ def main():
                         if not is_valid:
                             st.error(f"❌ Missing required columns: {', '.join(missing)}")
                             st.stop()
+
+                    elif data_source == "Pre-scored Data (4b format)":
+                        df_raw = load_uploaded_provider_scores_file(uploaded_scores)
+                        is_valid, missing = validate_provider_scores_data(df_raw)
+                        if not is_valid:
+                            st.error(
+                                f"❌ Missing required columns in pre-scored file: {', '.join(missing)}"
+                            )
+                            st.stop()
+                        provider_scores_df = prepare_provider_scores_df(df_raw)
+                        st.session_state.provider_scores_df = provider_scores_df
+                        st.session_state.data_mode = "provider_scores"
+                        # Placeholders so non-branched code downstream doesn't KeyError
+                        portfolio_df = pd.DataFrame()
+                        fundamental_df = pd.DataFrame()
+                        target_df = pd.DataFrame()
 
                     else:  # Load from Database
                         db_data = load_data_from_db(selected_dataset)
@@ -339,102 +383,84 @@ def main():
             help="Method for aggregating company scores to portfolio level"
         )
         aggregation_method = agg_options[selected_agg]
-        
-        # Grouping options
-        st.markdown("#### Grouping")
-        geo_options = ["None", "region", "country"]
-        selected_geo = st.selectbox(
-            "Geographic grouping",
-            options=geo_options,
-            index=0,
-            help="Group companies by region or country (shown on Y-axis of heatmap)"
-        )
-        sector_options = ["None", "sector", "industry_level_1"]
-        selected_sector_group = st.selectbox(
-            "Sector grouping",
-            options=sector_options,
-            index=0,
-            help="Group companies by sector or industry (shown on X-axis of heatmap)"
-        )
-        
-        # Build the grouping list: geographic axis first (y-axis), sector axis second (x-axis)
-        grouping = None
-        _grouping_parts = []
-        if selected_geo != "None":
-            _grouping_parts.append(selected_geo)
-        if selected_sector_group != "None":
-            _grouping_parts.append(selected_sector_group)
-        if _grouping_parts:
-            grouping = _grouping_parts
 
         # --- SBTi & Coverage Settings ---
-        st.markdown("#### SBTi Settings")
+        if st.session_state.get("data_mode") != "provider_scores":
+            st.markdown("#### SBTi Settings")
 
-        sbti_factor = st.number_input(
-            "SBTi Factor",
-            min_value=0.0,
-            max_value=1.0,
-            value=1.0,
-            step=0.05,
-            help=(
-                "Blending factor for companies without SBTi-validated targets. "
-                "1.0 = all scores calculated from targets regardless of SBTi status. "
-                "Values < 1 blend toward the default score for non-validated companies."
-            ),
-        )
-
-        calculate_coverage = st.checkbox(
-            "Calculate portfolio coverage",
-            value=False,
-            help="Run SBTi portfolio coverage analysis (requires CTA file when enabled)",
-        )
-
-        # Only show CTA / offline controls when a CTA file is actually needed
-        _needs_cta = sbti_factor != 1.0 or calculate_coverage
-        st.session_state["_prev_needs_cta"] = st.session_state.get("_needs_cta_last", False)
-        st.session_state["_needs_cta_last"] = _needs_cta
-        cta_file_path = None  # default: auto-download (or not needed)
-
-        if _needs_cta:
-            st.markdown("#### CTA File")
-            cta_source = st.radio(
-                "Companies Taking Action data",
-                options=["Auto-download from SBTi", "Upload custom file"],
-                index=0,
-                help="The CTA file lists companies with validated SBTi targets",
-            )
-
-            if cta_source == "Upload custom file":
-                cta_upload = st.file_uploader(
-                    "Upload CTA Excel file",
-                    type=["xlsx", "xls"],
-                    key="cta_file",
-                )
-                if cta_upload is not None:
-                    import tempfile as _tmpmod
-                    _cta_tmp = _tmpmod.NamedTemporaryFile(delete=False, suffix=".xlsx")
-                    _cta_tmp.write(cta_upload.getvalue())
-                    _cta_tmp.close()
-                    cta_file_path = _cta_tmp.name
-                else:
-                    st.warning("⚠️ Please upload a CTA file or switch to auto-download")
-
-            offline_mode = st.checkbox(
-                "Offline mode",
-                value=False,
+            sbti_factor = st.number_input(
+                "SBTi Factor",
+                min_value=0.0,
+                max_value=1.0,
+                value=1.0,
+                step=0.05,
                 help=(
-                    "When enabled, uses a cached/bundled CTA file instead of "
-                    "downloading from SBTi. Useful behind firewalls."
+                    "Blending factor for companies without SBTi-validated targets. "
+                    "1.0 = all scores calculated from targets regardless of SBTi status. "
+                    "Values < 1 blend toward the default score for non-validated companies."
                 ),
             )
-            PortfolioCoverageTVPConfig.OFFLINE = offline_mode
-            import os as _os
-            if offline_mode:
-                _os.environ["ITR_OFFLINE"] = "1"
+
+            calculate_coverage = st.checkbox(
+                "Calculate portfolio coverage",
+                value=False,
+                help="Run SBTi portfolio coverage analysis (requires CTA file when enabled)",
+            )
+
+            # Only show CTA / offline controls when a CTA file is actually needed
+            _needs_cta = sbti_factor != 1.0 or calculate_coverage
+            st.session_state["_prev_needs_cta"] = st.session_state.get("_needs_cta_last", False)
+            st.session_state["_needs_cta_last"] = _needs_cta
+            cta_file_path = None  # default: auto-download (or not needed)
+
+            if _needs_cta:
+                st.markdown("#### CTA File")
+                cta_source = st.radio(
+                    "Companies Taking Action data",
+                    options=["Auto-download from SBTi", "Upload custom file"],
+                    index=0,
+                    help="The CTA file lists companies with validated SBTi targets",
+                )
+
+                if cta_source == "Upload custom file":
+                    cta_upload = st.file_uploader(
+                        "Upload CTA Excel file",
+                        type=["xlsx", "xls"],
+                        key="cta_file",
+                    )
+                    if cta_upload is not None:
+                        import tempfile as _tmpmod
+                        _cta_tmp = _tmpmod.NamedTemporaryFile(delete=False, suffix=".xlsx")
+                        _cta_tmp.write(cta_upload.getvalue())
+                        _cta_tmp.close()
+                        cta_file_path = _cta_tmp.name
+                    else:
+                        st.warning("⚠️ Please upload a CTA file or switch to auto-download")
+
+                offline_mode = st.checkbox(
+                    "Offline mode",
+                    value=False,
+                    help=(
+                        "When enabled, uses a cached/bundled CTA file instead of "
+                        "downloading from SBTi. Useful behind firewalls."
+                    ),
+                )
+                PortfolioCoverageTVPConfig.OFFLINE = offline_mode
+                import os as _os
+                if offline_mode:
+                    _os.environ["ITR_OFFLINE"] = "1"
+                else:
+                    _os.environ.pop("ITR_OFFLINE", None)
             else:
+                # Reset offline state when CTA is not needed
+                PortfolioCoverageTVPConfig.OFFLINE = False
+                import os as _os
                 _os.environ.pop("ITR_OFFLINE", None)
         else:
-            # Reset offline state when CTA is not needed
+            # Pre-scored mode — SBTi settings not applicable
+            sbti_factor = 1.0
+            calculate_coverage = False
+            cta_file_path = None
             PortfolioCoverageTVPConfig.OFFLINE = False
             import os as _os
             _os.environ.pop("ITR_OFFLINE", None)
@@ -459,291 +485,350 @@ def main():
         )
         st.stop()
 
-    # ------------------------------------------------------------------
-    # Data Review & Editing Section
-    # ------------------------------------------------------------------
-    st.markdown("---")
-    st.subheader("📝 Review & Edit Data")
-    st.caption(
-        "Inspect the loaded data below. Click **Edit** to modify a table. "
-        "Use **Save to Database** to persist changes between sessions."
-    )
-
-    # Toggle flags for editing mode
-    for _flag in ("edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
-        if _flag not in st.session_state:
-            st.session_state[_flag] = False
-
-    edit_tab1, edit_tab2, edit_tab3 = st.tabs([
-        "Portfolio", "Company Fundamentals", "Targets"
-    ])
-
-    with edit_tab1:
-        st.markdown(f"**{len(st.session_state.portfolio_df)} companies** in portfolio")
-        if st.session_state.get("portfolio_dropped_warning"):
-            st.warning(st.session_state.pop("portfolio_dropped_warning"))
-        if st.session_state.edit_portfolio_mode:
-            edited_portfolio = st.data_editor(
-                st.session_state.portfolio_df,
-                num_rows="dynamic",
-                width="stretch",
-                key="edit_portfolio",
-            )
-            col_apply, col_cancel = st.columns(2)
-            with col_apply:
-                if st.button("✅ Apply changes", key="apply_portfolio"):
-                    _cleaned, _dropped = clean_portfolio_df(edited_portfolio)
-                    if _dropped > 0:
-                        st.session_state["portfolio_dropped_warning"] = (
-                            f"Removed {_dropped} incomplete row(s) (missing company_id, company_name, or valid investment_value)."
-                        )
-                    st.session_state.portfolio_df = _cleaned
-                    st.session_state.edit_portfolio_mode = False
-                    st.session_state.pop("scoring_results", None)
-                    st.session_state.pop("coverage_result", None)
-                    st.session_state.pop("_committed_key", None)
-                    st.rerun()
-            with col_cancel:
-                if st.button("Cancel", key="cancel_portfolio"):
-                    st.session_state.edit_portfolio_mode = False
-                    st.rerun()
-        else:
-            st.dataframe(st.session_state.portfolio_df, width="stretch", height=400)
-            if st.button("✏️ Edit Portfolio", key="toggle_edit_portfolio"):
-                st.session_state.edit_portfolio_mode = True
-                st.rerun()
-
-    with edit_tab2:
-        st.markdown(f"**{len(st.session_state.fundamental_df)} companies** with fundamental data")
-        if st.session_state.get("fundamental_dropped_warning"):
-            st.warning(st.session_state.pop("fundamental_dropped_warning"))
-        if st.session_state.edit_fundamental_mode:
-            edited_fundamental = st.data_editor(
-                st.session_state.fundamental_df,
-                num_rows="dynamic",
-                width="stretch",
-                key="edit_fundamental",
-            )
-            col_apply, col_cancel = st.columns(2)
-            with col_apply:
-                if st.button("✅ Apply changes", key="apply_fundamental"):
-                    _cleaned, _dropped = clean_fundamental_df(edited_fundamental)
-                    if _dropped > 0:
-                        st.session_state["fundamental_dropped_warning"] = (
-                            f"Removed {_dropped} invalid row(s) (missing company_id or company_name)."
-                        )
-                    st.session_state.fundamental_df = _cleaned
-                    st.session_state.edit_fundamental_mode = False
-                    st.session_state.pop("scoring_results", None)
-                    st.session_state.pop("coverage_result", None)
-                    st.session_state.pop("_committed_key", None)
-                    st.rerun()
-            with col_cancel:
-                if st.button("Cancel", key="cancel_fundamental"):
-                    st.session_state.edit_fundamental_mode = False
-                    st.rerun()
-        else:
-            st.dataframe(st.session_state.fundamental_df, width="stretch", height=400)
-            if st.button("✏️ Edit Fundamentals", key="toggle_edit_fundamental"):
-                st.session_state.edit_fundamental_mode = True
-                st.rerun()
-
-    with edit_tab3:
-        st.markdown(f"**{len(st.session_state.target_df)} targets**")
-        if st.session_state.get("target_dropped_warning"):
-            st.warning(st.session_state.pop("target_dropped_warning"))
-        if st.session_state.edit_target_mode:
-            edited_target = st.data_editor(
-                st.session_state.target_df,
-                num_rows="dynamic",
-                width="stretch",
-                key="edit_target",
-            )
-            col_apply, col_cancel = st.columns(2)
-            with col_apply:
-                if st.button("✅ Apply changes", key="apply_target"):
-                    _cleaned, _dropped = clean_target_df(edited_target)
-                    if _dropped > 0:
-                        st.session_state["target_dropped_warning"] = (
-                            f"Removed {_dropped} invalid row(s) (missing company_id, target_type, scope, base_year, or end_year)."
-                        )
-                    st.session_state.target_df = _cleaned
-                    st.session_state.edit_target_mode = False
-                    st.session_state.pop("scoring_results", None)
-                    st.session_state.pop("coverage_result", None)
-                    st.session_state.pop("_committed_key", None)
-                    st.rerun()
-            with col_cancel:
-                if st.button("Cancel", key="cancel_target"):
-                    st.session_state.edit_target_mode = False
-                    st.rerun()
-        else:
-            st.dataframe(st.session_state.target_df, width="stretch", height=400)
-            if st.button("✏️ Edit Targets", key="toggle_edit_target"):
-                st.session_state.edit_target_mode = True
-                st.rerun()
-
-    # Use the (possibly edited) session-state versions going forward
-    # Clean all DataFrames so the UI always shows exactly what the calculation uses
-    portfolio_df, _ = clean_portfolio_df(st.session_state.portfolio_df)
-    st.session_state.portfolio_df = portfolio_df
-
-    fundamental_df, _ = clean_fundamental_df(st.session_state.fundamental_df)
-    st.session_state.fundamental_df = fundamental_df
-
-    target_df, _ = clean_target_df(st.session_state.target_df)
-    st.session_state.target_df = target_df
-
-    # -- Save to Database (uses edited data) --------------------------------
-    with st.expander("💾 Save data to local database", expanded=False):
-        save_col1, save_col2 = st.columns([2, 1])
-        with save_col1:
-            save_name = st.text_input(
-                "Dataset name",
-                value="my_dataset",
-                key="save_ds_name",
-                help="Give this dataset a name for later retrieval"
-            )
-            save_desc = st.text_input(
-                "Description (optional)",
-                value="",
-                key="save_ds_desc",
-            )
-        with save_col2:
-            st.markdown("")
-            st.markdown("")
-            if st.button("💾 Save", type="primary", key="save_to_db"):
-                save_data_to_db(save_name, portfolio_df, fundamental_df, target_df, save_desc)
-                st.success(f"✅ Saved as '{save_name}'")
-
-    # Rebuild provider from current (possibly edited) DataFrames
-    provider = create_provider_from_dataframes(fundamental_df, target_df)
-
-    # Convert portfolio to companies
-    companies = convert_portfolio_to_companies(portfolio_df)
-    # Add confirmation before running calculations
-    st.markdown("---")
-    
-    col_img, col_header = st.columns([1, 12])
-    with col_img:
-        st.image("assets/itr-logo.png", width=64)
-    with col_header:
-        st.subheader("Ready to Calculate Temperature Scores")
-    
-    col1, col2, col3 = st.columns([2, 1, 2])
-    with col1:
-        st.info(f"**Data loaded:** {len(portfolio_df)} companies")
-        st.info(f"**Source:** {st.session_state.get('_loaded_source', data_source)}")
-    with col2:
-        st.markdown("")
-    with col3:
-        if 'calculation_run' not in st.session_state:
-            st.session_state.calculation_run = False
-        
-        if st.button("▶️ Run Analysis", type="primary", width="stretch"):
-            st.session_state.calculation_run = True
-            st.session_state["_committed_key"] = None  # force recalculation
-        
-        if st.session_state.calculation_run:
-            if st.button("🔄 Reset", width="stretch"):
-                st.session_state.calculation_run = False
-                st.session_state.pop("scoring_results", None)
-                st.session_state.pop("coverage_result", None)
-                st.session_state.pop("_committed_key", None)
-                st.rerun()
-    
-    if not st.session_state.calculation_run:
-        st.warning("⏳ Click **Run Analysis** to calculate temperature scores")
-        st.stop()
-    
-    st.markdown("---")
+    # Determine data mode — set at load time for pre-scored uploads
+    is_provider_scores_mode = st.session_state.get("data_mode") == "provider_scores"
 
     # ------------------------------------------------------------------
-    # Two-level cache:
-    #   _score_key  — covers temperature scores + aggregation (slow).
-    #                 Does NOT include calculate_coverage so toggling the
-    #                 coverage checkbox never forces a full rescore.
-    #   _full_key   — used for the "params changed" guard and the fast
-    #                 coverage cache, so coverage is re-run when its own
-    #                 inputs (aggregation method, cta path, checkbox) change.
+    # Data Review & Editing Section  —  or pre-scored preview
     # ------------------------------------------------------------------
-    def _df_hash(df: pd.DataFrame) -> str:
-        return hashlib.md5(
-            pd.util.hash_pandas_object(df, index=True).values.tobytes()
-        ).hexdigest()
+    if is_provider_scores_mode:
+        # ---- Pre-scored mode: read-only preview + aggregation ----
+        amended_portfolio = st.session_state.provider_scores_df
+        portfolio_df = amended_portfolio
+        fundamental_df = amended_portfolio
 
-    _data_hash = _df_hash(portfolio_df) + _df_hash(fundamental_df) + _df_hash(target_df)
+        st.markdown("---")
+        st.subheader("📊 Pre-scored Portfolio Data")
 
-    _score_key = (
-        _data_hash,
-        tuple(tf.value for tf in time_frames),
-        tuple(sc.value for sc in scopes),
-        aggregation_method.value if hasattr(aggregation_method, 'value') else str(aggregation_method),
-        str(grouping),
-        sbti_factor,
-        cta_file_path,
-    )
-    _full_key = (_score_key, calculate_coverage)
+        _ps_unique = amended_portfolio["company_id"].nunique() if "company_id" in amended_portfolio.columns else "N/A"
+        _ps_scopes = sorted({str(s.name) for s in amended_portfolio["scope"].unique()}) if "scope" in amended_portfolio.columns else []
+        _ps_tfs = sorted({str(t.name) for t in amended_portfolio["time_frame"].unique()}) if "time_frame" in amended_portfolio.columns else []
+        _ps_c1, _ps_c2, _ps_c3 = st.columns(3)
+        _ps_c1.metric("Rows", len(amended_portfolio))
+        _ps_c2.metric("Companies", _ps_unique)
+        _ps_c3.metric("Scopes", ", ".join(_ps_scopes) or "N/A")
+        st.caption(f"Time frames present: {', '.join(_ps_tfs) or 'N/A'}")
 
-    # If parameters changed since the last committed run, pause and prompt the
-    # user to click Run Analysis again — prevents immediate recalculation on
-    # every sidebar interaction (e.g. clicking sbti_factor +/- multiple times).
-    # Only _score_key is used here — toggling coverage alone does not require
-    # a full rerun since coverage is calculated independently.
-    _committed_key = st.session_state.get("_committed_key")
-    if _committed_key is not None and _committed_key != _score_key:
-        st.session_state.calculation_run = False
-        st.warning("⚙️ Parameters changed — click **▶️ Run Analysis** to recalculate")
-        st.stop()
+        with st.expander("🔍 Preview data", expanded=False):
+            _preview_df = amended_portfolio.head(40).copy()
+            for _col in ("scope", "time_frame"):
+                if _col in _preview_df.columns:
+                    _preview_df[_col] = _preview_df[_col].apply(
+                        lambda x: x.name if hasattr(x, "name") else str(x)
+                    )
+            st.dataframe(_preview_df, use_container_width=True)
 
-    # --- Temperature scores + aggregation (expensive) ---
-    _score_cached = st.session_state.get("scoring_results")
-    if _score_cached is not None and _score_cached.get("key") == _score_key:
-        amended_portfolio = _score_cached["amended_portfolio"]
-        aggregated_scores = _score_cached["aggregated_scores"]
-    else:
-        with st.spinner("Calculating temperature scores..."):
-            amended_portfolio = calculate_temperature_scores(
-                _provider=provider,
-                _companies=companies,
-                time_frames=time_frames,
-                scopes=scopes,
-                aggregation_method=aggregation_method,
-                grouping=grouping,
-                sbti_factor=sbti_factor,
-                cta_file_path=cta_file_path,
-                data_hash=_data_hash,
-            )
-            aggregated_scores = aggregate_portfolio_scores(
-                amended_portfolio=amended_portfolio,
-                time_frames=time_frames,
-                scopes=scopes,
-                aggregation_method=aggregation_method,
-                grouping=grouping,
-                sbti_factor=sbti_factor,
-            )
-        st.session_state.scoring_results = {
-            "key": _score_key,
-            "amended_portfolio": amended_portfolio,
-            "aggregated_scores": aggregated_scores,
-        }
+        # Aggregate scores — cached per (data hash + analysis params)
+        def _df_hash(df: pd.DataFrame) -> str:
+            return hashlib.md5(
+                pd.util.hash_pandas_object(df, index=True).values.tobytes()
+            ).hexdigest()
 
-    # --- Portfolio coverage (fast, separate cache) ---
-    _cov_cached = st.session_state.get("coverage_result")
-    if calculate_coverage:
-        if _cov_cached is not None and _cov_cached.get("key") == _full_key:
-            coverage = _cov_cached["coverage"]
+        _ps_key = (
+            _df_hash(amended_portfolio),
+            tuple(tf.value for tf in time_frames),
+            tuple(sc.value for sc in scopes),
+            aggregation_method.value if hasattr(aggregation_method, "value") else str(aggregation_method),
+        )
+        _ps_cached = st.session_state.get("ps_aggregation_result")
+        if _ps_cached is not None and _ps_cached.get("key") == _ps_key:
+            aggregated_scores = _ps_cached["aggregated_scores"]
         else:
-            with st.spinner("Calculating portfolio coverage..."):
-                coverage = calculate_portfolio_coverage(
-                    amended_portfolio, aggregation_method,
-                    cta_file_path=cta_file_path,
+            with st.spinner("Aggregating scores..."):
+                aggregated_scores = aggregate_portfolio_scores(
+                    amended_portfolio=amended_portfolio,
+                    time_frames=time_frames,
+                    scopes=scopes,
+                    aggregation_method=aggregation_method,
                 )
-            st.session_state.coverage_result = {"key": _full_key, "coverage": coverage}
-    else:
+            st.session_state.ps_aggregation_result = {
+                "key": _ps_key,
+                "aggregated_scores": aggregated_scores,
+            }
         coverage = None
 
-    st.session_state["_committed_key"] = _score_key
+    else:
+        # ---- Normal scoring mode: review, edit, run analysis ----
+
+        st.markdown("---")
+        st.subheader("📝 Review & Edit Data")
+        st.caption(
+            "Inspect the loaded data below. Click **Edit** to modify a table. "
+            "Use **Save to Database** to persist changes between sessions."
+        )
+
+        # Toggle flags for editing mode
+        for _flag in ("edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode"):
+            if _flag not in st.session_state:
+                st.session_state[_flag] = False
+
+        edit_tab1, edit_tab2, edit_tab3 = st.tabs([
+            "Portfolio", "Company Fundamentals", "Targets"
+        ])
+
+        with edit_tab1:
+            st.markdown(f"**{len(st.session_state.portfolio_df)} companies** in portfolio")
+            if st.session_state.get("portfolio_dropped_warning"):
+                st.warning(st.session_state.pop("portfolio_dropped_warning"))
+            if st.session_state.edit_portfolio_mode:
+                edited_portfolio = st.data_editor(
+                    st.session_state.portfolio_df,
+                    num_rows="dynamic",
+                    width="stretch",
+                    key="edit_portfolio",
+                )
+                col_apply, col_cancel = st.columns(2)
+                with col_apply:
+                    if st.button("✅ Apply changes", key="apply_portfolio"):
+                        _cleaned, _dropped = clean_portfolio_df(edited_portfolio)
+                        if _dropped > 0:
+                            st.session_state["portfolio_dropped_warning"] = (
+                                f"Removed {_dropped} incomplete row(s) (missing company_id, company_name, or valid investment_value)."
+                            )
+                        st.session_state.portfolio_df = _cleaned
+                        st.session_state.edit_portfolio_mode = False
+                        st.session_state.pop("scoring_results", None)
+                        st.session_state.pop("coverage_result", None)
+                        st.session_state.pop("_committed_key", None)
+                        st.rerun()
+                with col_cancel:
+                    if st.button("Cancel", key="cancel_portfolio"):
+                        st.session_state.edit_portfolio_mode = False
+                        st.rerun()
+            else:
+                st.dataframe(st.session_state.portfolio_df, width="stretch", height=400)
+                if st.button("✏️ Edit Portfolio", key="toggle_edit_portfolio"):
+                    st.session_state.edit_portfolio_mode = True
+                    st.rerun()
+
+        with edit_tab2:
+            st.markdown(f"**{len(st.session_state.fundamental_df)} companies** with fundamental data")
+            if st.session_state.get("fundamental_dropped_warning"):
+                st.warning(st.session_state.pop("fundamental_dropped_warning"))
+            if st.session_state.edit_fundamental_mode:
+                edited_fundamental = st.data_editor(
+                    st.session_state.fundamental_df,
+                    num_rows="dynamic",
+                    width="stretch",
+                    key="edit_fundamental",
+                )
+                col_apply, col_cancel = st.columns(2)
+                with col_apply:
+                    if st.button("✅ Apply changes", key="apply_fundamental"):
+                        _cleaned, _dropped = clean_fundamental_df(edited_fundamental)
+                        if _dropped > 0:
+                            st.session_state["fundamental_dropped_warning"] = (
+                                f"Removed {_dropped} invalid row(s) (missing company_id or company_name)."
+                            )
+                        st.session_state.fundamental_df = _cleaned
+                        st.session_state.edit_fundamental_mode = False
+                        st.session_state.pop("scoring_results", None)
+                        st.session_state.pop("coverage_result", None)
+                        st.session_state.pop("_committed_key", None)
+                        st.rerun()
+                with col_cancel:
+                    if st.button("Cancel", key="cancel_fundamental"):
+                        st.session_state.edit_fundamental_mode = False
+                        st.rerun()
+            else:
+                st.dataframe(st.session_state.fundamental_df, width="stretch", height=400)
+                if st.button("✏️ Edit Fundamentals", key="toggle_edit_fundamental"):
+                    st.session_state.edit_fundamental_mode = True
+                    st.rerun()
+
+        with edit_tab3:
+            st.markdown(f"**{len(st.session_state.target_df)} targets**")
+            if st.session_state.get("target_dropped_warning"):
+                st.warning(st.session_state.pop("target_dropped_warning"))
+            if st.session_state.edit_target_mode:
+                edited_target = st.data_editor(
+                    st.session_state.target_df,
+                    num_rows="dynamic",
+                    width="stretch",
+                    key="edit_target",
+                )
+                col_apply, col_cancel = st.columns(2)
+                with col_apply:
+                    if st.button("✅ Apply changes", key="apply_target"):
+                        _cleaned, _dropped = clean_target_df(edited_target)
+                        if _dropped > 0:
+                            st.session_state["target_dropped_warning"] = (
+                                f"Removed {_dropped} invalid row(s) (missing company_id, target_type, scope, base_year, or end_year)."
+                            )
+                        st.session_state.target_df = _cleaned
+                        st.session_state.edit_target_mode = False
+                        st.session_state.pop("scoring_results", None)
+                        st.session_state.pop("coverage_result", None)
+                        st.session_state.pop("_committed_key", None)
+                        st.rerun()
+                with col_cancel:
+                    if st.button("Cancel", key="cancel_target"):
+                        st.session_state.edit_target_mode = False
+                        st.rerun()
+            else:
+                st.dataframe(st.session_state.target_df, width="stretch", height=400)
+                if st.button("✏️ Edit Targets", key="toggle_edit_target"):
+                    st.session_state.edit_target_mode = True
+                    st.rerun()
+
+        # Use the (possibly edited) session-state versions going forward
+        # Clean all DataFrames so the UI always shows exactly what the calculation uses
+        portfolio_df, _ = clean_portfolio_df(st.session_state.portfolio_df)
+        st.session_state.portfolio_df = portfolio_df
+
+        fundamental_df, _ = clean_fundamental_df(st.session_state.fundamental_df)
+        st.session_state.fundamental_df = fundamental_df
+
+        target_df, _ = clean_target_df(st.session_state.target_df)
+        st.session_state.target_df = target_df
+
+        # -- Save to Database (uses edited data) --------------------------------
+        with st.expander("💾 Save data to local database", expanded=False):
+            save_col1, save_col2 = st.columns([2, 1])
+            with save_col1:
+                save_name = st.text_input(
+                    "Dataset name",
+                    value="my_dataset",
+                    key="save_ds_name",
+                    help="Give this dataset a name for later retrieval"
+                )
+                save_desc = st.text_input(
+                    "Description (optional)",
+                    value="",
+                    key="save_ds_desc",
+                )
+            with save_col2:
+                st.markdown("")
+                st.markdown("")
+                if st.button("💾 Save", type="primary", key="save_to_db"):
+                    save_data_to_db(save_name, portfolio_df, fundamental_df, target_df, save_desc)
+                    st.success(f"✅ Saved as '{save_name}'")
+
+        # Rebuild provider from current (possibly edited) DataFrames
+        provider = create_provider_from_dataframes(fundamental_df, target_df)
+
+        # Convert portfolio to companies
+        companies = convert_portfolio_to_companies(portfolio_df)
+        # Add confirmation before running calculations
+        st.markdown("---")
+
+        col_img, col_header = st.columns([1, 12])
+        with col_img:
+            st.image("assets/itr-logo.png", width=64)
+        with col_header:
+            st.subheader("Ready to Calculate Temperature Scores")
+
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col1:
+            st.info(f"**Data loaded:** {len(portfolio_df)} companies")
+            st.info(f"**Source:** {st.session_state.get('_loaded_source', data_source)}")
+        with col2:
+            st.markdown("")
+        with col3:
+            if 'calculation_run' not in st.session_state:
+                st.session_state.calculation_run = False
+
+            if st.button("▶️ Run Analysis", type="primary", width="stretch"):
+                st.session_state.calculation_run = True
+                st.session_state["_committed_key"] = None  # force recalculation
+
+            if st.session_state.calculation_run:
+                if st.button("🔄 Reset", width="stretch"):
+                    st.session_state.calculation_run = False
+                    st.session_state.pop("scoring_results", None)
+                    st.session_state.pop("coverage_result", None)
+                    st.session_state.pop("_committed_key", None)
+                    st.rerun()
+
+        if not st.session_state.calculation_run:
+            st.warning("⏳ Click **Run Analysis** to calculate temperature scores")
+            st.stop()
+
+        st.markdown("---")
+
+        # ------------------------------------------------------------------
+        # Two-level cache:
+        #   _score_key  — covers temperature scores + aggregation (slow).
+        #                 Does NOT include calculate_coverage so toggling the
+        #                 coverage checkbox never forces a full rescore.
+        #   _full_key   — used for the "params changed" guard and the fast
+        #                 coverage cache, so coverage is re-run when its own
+        #                 inputs (aggregation method, cta path, checkbox) change.
+        # ------------------------------------------------------------------
+        def _df_hash(df: pd.DataFrame) -> str:
+            return hashlib.md5(
+                pd.util.hash_pandas_object(df, index=True).values.tobytes()
+            ).hexdigest()
+
+        _data_hash = _df_hash(portfolio_df) + _df_hash(fundamental_df) + _df_hash(target_df)
+
+        _score_key = (
+            _data_hash,
+            tuple(tf.value for tf in time_frames),
+            tuple(sc.value for sc in scopes),
+            aggregation_method.value if hasattr(aggregation_method, 'value') else str(aggregation_method),
+            sbti_factor,
+            cta_file_path,
+        )
+        _full_key = (_score_key, calculate_coverage)
+
+        # If parameters changed since the last committed run, pause and prompt the
+        # user to click Run Analysis again — prevents immediate recalculation on
+        # every sidebar interaction (e.g. clicking sbti_factor +/- multiple times).
+        # Only _score_key is used here — toggling coverage alone does not require
+        # a full rerun since coverage is calculated independently.
+        _committed_key = st.session_state.get("_committed_key")
+        if _committed_key is not None and _committed_key != _score_key:
+            st.session_state.calculation_run = False
+            st.warning("⚙️ Parameters changed — click **▶️ Run Analysis** to recalculate")
+            st.stop()
+
+        # --- Temperature scores + aggregation (expensive) ---
+        _score_cached = st.session_state.get("scoring_results")
+        if _score_cached is not None and _score_cached.get("key") == _score_key:
+            amended_portfolio = _score_cached["amended_portfolio"]
+            aggregated_scores = _score_cached["aggregated_scores"]
+        else:
+            with st.spinner("Calculating temperature scores..."):
+                amended_portfolio = calculate_temperature_scores(
+                    _provider=provider,
+                    _companies=companies,
+                    time_frames=time_frames,
+                    scopes=scopes,
+                    aggregation_method=aggregation_method,
+                    sbti_factor=sbti_factor,
+                    cta_file_path=cta_file_path,
+                    data_hash=_data_hash,
+                )
+                aggregated_scores = aggregate_portfolio_scores(
+                    amended_portfolio=amended_portfolio,
+                    time_frames=time_frames,
+                    scopes=scopes,
+                    aggregation_method=aggregation_method,
+                    sbti_factor=sbti_factor,
+                )
+            st.session_state.scoring_results = {
+                "key": _score_key,
+                "amended_portfolio": amended_portfolio,
+                "aggregated_scores": aggregated_scores,
+            }
+
+        # --- Portfolio coverage (fast, separate cache) ---
+        _cov_cached = st.session_state.get("coverage_result")
+        if calculate_coverage:
+            if _cov_cached is not None and _cov_cached.get("key") == _full_key:
+                coverage = _cov_cached["coverage"]
+            else:
+                with st.spinner("Calculating portfolio coverage..."):
+                    coverage = calculate_portfolio_coverage(
+                        amended_portfolio, aggregation_method,
+                        cta_file_path=cta_file_path,
+                    )
+                st.session_state.coverage_result = {"key": _full_key, "coverage": coverage}
+        else:
+            coverage = None
+
+        st.session_state["_committed_key"] = _score_key
 
     # Main content tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -836,147 +921,176 @@ def main():
 
         # Portfolio data preview
         with st.expander("📋 View Portfolio Data"):
-            st.dataframe(portfolio_df.head(20), width="stretch")
+            _pf_display = portfolio_df.head(20).copy()
+            for _col in ("scope", "time_frame"):
+                if _col in _pf_display.columns:
+                    _pf_display[_col] = _pf_display[_col].apply(
+                        lambda x: x.name if hasattr(x, "name") else str(x)
+                    )
+            st.dataframe(_pf_display, width="stretch")
 
     # Tab 2: Hotspot Analysis
     with tab2:
         st.header("Hotspot Analysis")
 
-        if grouping:
-            st.markdown(f"**Grouped by:** {', '.join(grouping)}")
+        # Available parameters: only those columns that exist and have data
+        _HS_PARAMS = {
+            "Region":    "region",
+            "Country":   "country",
+            "Sector":    "sector",
+            "Industry":  "industry_level_1",
+            "Scope":     "scope",
+            "Timeframe": "time_frame",
+        }
+        available_params = [
+            name for name, col in _HS_PARAMS.items()
+            if col in amended_portfolio.columns
+            and amended_portfolio[col].notna().any()
+        ]
 
-            # Analysis parameters selection
-            col1, col2 = st.columns(2)
-            with col1:
-                analysis_tf = st.selectbox(
-                    "Timeframe for Analysis",
-                    options=selected_timeframes,
-                    index=0,
-                    key="hotspot_tf"
-                )
-            with col2:
-                analysis_scope = st.selectbox(
-                    "Scope for Analysis",
-                    options=selected_scopes,
-                    index=0,
-                    key="hotspot_scope"
-                )
+        def _hs_to_str(v):
+            return v.name if hasattr(v, "name") else str(v)
 
-            analysis_time_frame = timeframe_options[analysis_tf]
-            analysis_scope_val = scope_options[analysis_scope]
+        def _hs_unique_vals(col: str) -> list:
+            raw = amended_portfolio[col].dropna().unique().tolist()
+            return sorted({_hs_to_str(v) for v in raw})
 
-            _sector_columns = {"sector", "industry_level_1"}
-            _is_sector_only = len(grouping) == 1 and grouping[0] in _sector_columns
-
-            if _is_sector_only:
-                # --- Sector-only grouping: rich pie + bar charts ---------------
-                st.subheader("Sector Statistics")
-                contributions = collect_company_contributions(
-                    aggregated_portfolio=aggregated_scores,
-                    amended_portfolio=amended_portfolio,
-                    time_frame=analysis_time_frame,
-                    scope=analysis_scope_val,
-                )
-
-                if not contributions.empty and grouping[0] in contributions.columns:
-                    pie_fig, bar_fig = plot_sector_statistics(
-                        contributions, sector_column=grouping[0]
-                    )
-                    st.plotly_chart(pie_fig, width="stretch")
-                    st.plotly_chart(bar_fig, width="stretch")
-                else:
-                    st.info("No sector data available for the selected parameters.")
-            else:
-                # --- Two-axis or geo-only: heatmap / bar chart -----------------
-                st.subheader("Temperature Score Heatmap")
-                heatmap_fig = plot_heatmap(
-                    aggregated_scores=aggregated_scores,
-                    time_frame=analysis_time_frame,
-                    scope=analysis_scope_val,
-                    grouping=grouping,
-                    title=f"Temperature Scores - {analysis_tf} / {analysis_scope}"
-                )
-                st.plotly_chart(heatmap_fig, width="stretch")
-
-            # --- Group Drill-Down -------------------------------------------
-            st.subheader("Group Drill-Down")
-            st.caption("Select a specific group to see company-level contributions.")
-
-            drill_cols = st.columns(len(grouping))
-            drill_selections = []
-            for idx, g_col in enumerate(grouping):
-                unique_vals = sorted(
-                    fundamental_df[g_col].dropna().unique().tolist()
-                )
-                label_map = {
-                    'region': 'Region',
-                    'country': 'Country',
-                    'sector': 'Sector',
-                    'industry_level_1': 'Industry',
-                }
-                with drill_cols[idx]:
-                    sel = st.selectbox(
-                        label_map.get(g_col, g_col.title()),
-                        options=unique_vals,
-                        key=f"drill_{g_col}",
-                    )
-                    drill_selections.append(sel)
-
-            # Build the group key in the same order as the grouping list
-            group_key = "-".join(drill_selections)
-
-            group_contrib = get_contributions_per_group(
-                aggregated_scores=aggregated_scores,
-                time_frame=analysis_time_frame,
-                scope=analysis_scope_val,
-                group_name=group_key,
-            )
-
-            if not group_contrib.empty:
-                display_cols = [
-                    c for c in ['company_name', 'company_id', 'temperature_score', 'contribution_relative']
-                    if c in group_contrib.columns
-                ]
-                st.dataframe(
-                    group_contrib[display_cols].round(2),
-                    width="stretch",
-                    hide_index=True,
-                )
-            else:
-                st.info(f"No companies found for group **{group_key}**.")
-
+        if len(available_params) < 1:
+            st.warning("No groupable columns found in the loaded data.")
         else:
-            st.info("💡 Select a grouping option in the sidebar to see hotspot analysis by sector, region, etc.")
+            # ---- Filters ------------------------------------------------
+            st.subheader("Filters")
+            f_col1, f_col2 = st.columns(2)
 
-            # Show sector analysis even without grouping
-            st.subheader("Sector Temperature Scores")
-            analysis_tf = st.selectbox(
-                "Timeframe for Analysis",
-                options=selected_timeframes,
-                index=0,
-                key="sector_tf"
-            )
-            analysis_scope = st.selectbox(
-                "Scope for Analysis",
-                options=selected_scopes,
-                index=0,
-                key="sector_scope"
-            )
+            with f_col1:
+                filter1_param = st.selectbox(
+                    "Filter 1 — parameter", ["None"] + available_params, key="hs_f1_param"
+                )
+                if filter1_param != "None":
+                    filter1_val = st.selectbox(
+                        filter1_param,
+                        _hs_unique_vals(_HS_PARAMS[filter1_param]),
+                        key="hs_f1_val",
+                    )
+                else:
+                    filter1_val = None
 
-            analysis_time_frame = timeframe_options[analysis_tf]
-            analysis_scope_val = scope_options[analysis_scope]
+            remaining_params = [p for p in available_params if p != filter1_param]
 
-            contributions = collect_company_contributions(
-                aggregated_portfolio=aggregated_scores,
-                amended_portfolio=amended_portfolio,
-                time_frame=analysis_time_frame,
-                scope=analysis_scope_val,
-            )
+            with f_col2:
+                filter2_param = st.selectbox(
+                    "Filter 2 — parameter", ["None"] + remaining_params, key="hs_f2_param"
+                )
+                if filter2_param != "None":
+                    filter2_val = st.selectbox(
+                        filter2_param,
+                        _hs_unique_vals(_HS_PARAMS[filter2_param]),
+                        key="hs_f2_val",
+                    )
+                else:
+                    filter2_val = None
 
-            if not contributions.empty and 'sector' in contributions.columns:
-                pie_fig, bar_fig = plot_sector_statistics(contributions)
-                st.plotly_chart(pie_fig, width="stretch")
-                st.plotly_chart(bar_fig, width="stretch")
+            # ---- Apply filters on a string-converted copy ---------------
+            _df = amended_portfolio.copy()
+            for _hscol in _HS_PARAMS.values():
+                if _hscol in _df.columns:
+                    _df[_hscol] = _df[_hscol].apply(_hs_to_str)
+
+            if filter1_val is not None:
+                _df = _df[_df[_HS_PARAMS[filter1_param]] == filter1_val]
+            if filter2_val is not None:
+                _df = _df[_df[_HS_PARAMS[filter2_param]] == filter2_val]
+
+            # ---- Axis selection -----------------------------------------
+            used_as_filter = {filter1_param, filter2_param} - {"None"}
+            axis_params = [p for p in available_params if p not in used_as_filter]
+
+            st.subheader("Chart Axes")
+            ax_col1, ax_col2 = st.columns(2)
+
+            with ax_col1:
+                x_param = (
+                    st.selectbox("X-axis", axis_params, key="hs_x")
+                    if axis_params else None
+                )
+            y_options = ["None"] + [p for p in axis_params if p != x_param]
+            with ax_col2:
+                y_param = (
+                    st.selectbox(
+                        "Y-axis (optional — adds heatmap dimension)", y_options, key="hs_y"
+                    )
+                    if len(y_options) > 1 else None
+                )
+
+            # ---- Build chart --------------------------------------------
+            if not _df.empty and x_param:
+                x_col = _HS_PARAMS[x_param]
+                _df["_num"] = _df["temperature_score"] * _df["investment_value"]
+
+                # Build filter description for headings
+                _active_filters = []
+                if filter1_val is not None:
+                    _active_filters.append(f"{filter1_param} = {filter1_val}")
+                if filter2_val is not None:
+                    _active_filters.append(f"{filter2_param} = {filter2_val}")
+                _filter_suffix = f" — filtered by {', '.join(_active_filters)}" if _active_filters else ""
+                _subtitle = f"<br><sup>Aggregation: {selected_agg}</sup>"
+
+                if y_param and y_param != "None":
+                    y_col = _HS_PARAMS[y_param]
+                    _sum_num = _df.groupby([y_col, x_col])["_num"].sum()
+                    _sum_wt  = _df.groupby([y_col, x_col])["investment_value"].sum()
+                    _cell_scores = (
+                        _sum_num / _sum_wt.replace(0, float("nan"))
+                    ).rename("score")
+                    pivot = _cell_scores.unstack(level=x_col)
+
+                    fig = plot_heatmap(
+                        pivot=pivot,
+                        x_label=x_param,
+                        y_label=y_param,
+                        title=f"Temperature Scores by {y_param} / {x_param}{_filter_suffix}{_subtitle}",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                else:
+                    _sum_num = _df.groupby(x_col)["_num"].sum()
+                    _sum_wt  = _df.groupby(x_col)["investment_value"].sum()
+                    _cell_scores = (
+                        _sum_num / _sum_wt.replace(0, float("nan"))
+                    ).reset_index()
+                    _cell_scores.columns = [x_param, "Temperature Score (°C)"]
+                    _cell_scores = _cell_scores.sort_values(
+                        "Temperature Score (°C)", ascending=False
+                    )
+
+                    fig = px.bar(
+                        _cell_scores,
+                        x=x_param,
+                        y="Temperature Score (°C)",
+                        color="Temperature Score (°C)",
+                        color_continuous_scale="RdYlGn_r",
+                        range_color=[1.5, 3.4],
+                        title=f"Temperature Scores by {x_param}{_filter_suffix}{_subtitle}",
+                        text=_cell_scores["Temperature Score (°C)"].round(2),
+                    )
+                    fig.update_traces(textposition="outside")
+                    fig.update_layout(
+                        yaxis=dict(range=[0, 4.0]),
+                        xaxis_title=x_param,
+                    )
+                    fig.add_hline(
+                        y=2.0, line_dash="dash", line_color="orange", annotation_text="2.0°C"
+                    )
+                    fig.add_hline(
+                        y=1.5, line_dash="dash", line_color="green", annotation_text="1.5°C"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+            elif _df.empty:
+                st.warning("No data matches the selected filters.")
+            else:
+                st.info("Select an X-axis parameter above to display the chart.")
 
     # Tab 3: Company Analysis
     with tab3:
@@ -1044,155 +1158,148 @@ def main():
 
     # Tab 4: What-If Scenarios
     with tab4:
-        st.header("What-If Scenario Analysis")
+        if is_provider_scores_mode:
+            st.info(
+                "ℹ️ **Scenario analysis is not available for pre-scored data.** "
+                "This feature requires the full ITR scoring pipeline. "
+                "To run scenario analysis, use **Sample Data** or **Upload Custom Data** as your data source."
+            )
+        else:
+            st.header("What-If Scenario Analysis")
 
-        st.markdown("""
+            st.markdown("""
         Model the impact of engaging with portfolio companies to set climate targets.
         Select companies and scenario parameters to see how your portfolio score could improve.
         """)
 
-        col1, col2 = st.columns(2)
+            col1, col2 = st.columns(2)
 
-        with col1:
-            st.subheader("Scenario Configuration")
+            with col1:
+                st.subheader("Scenario Configuration")
 
-            scenario_options = get_scenario_options()
-            selected_scenario = st.selectbox(
-                "Scenario Type",
-                options=list(scenario_options.keys()),
-                index=3,  # Default to top contributors
-                help="Choose the type of engagement scenario"
-            )
-            scenario_type = scenario_options[selected_scenario]
+                scenario_options = get_scenario_options()
+                selected_scenario = st.selectbox(
+                    "Scenario Type",
+                    options=list(scenario_options.keys()),
+                    index=3,  # Default to top contributors
+                    help="Choose the type of engagement scenario"
+                )
+                scenario_type = scenario_options[selected_scenario]
 
-            engagement_options = get_engagement_options()
-            selected_engagement = st.selectbox(
-                "Engagement Type",
-                options=list(engagement_options.keys()),
-                index=0,
-                help="Target temperature for engaged companies"
-            )
-            engagement_type = engagement_options[selected_engagement]
+                engagement_options = get_engagement_options()
+                selected_engagement = st.selectbox(
+                    "Engagement Type",
+                    options=list(engagement_options.keys()),
+                    index=0,
+                    help="Target temperature for engaged companies"
+                )
+                engagement_type = engagement_options[selected_engagement]
 
-            # Timeframe/scope for scenario
-            scenario_tf = st.selectbox(
-                "Timeframe",
-                options=selected_timeframes,
-                index=0,
-                key="scenario_tf"
-            )
-            scenario_scope = st.selectbox(
-                "Scope",
-                options=selected_scopes,
-                index=0,
-                key="scenario_scope"
-            )
-
-        with col2:
-            st.subheader("Engagement Candidates")
-
-            scenario_time_frame = timeframe_options[scenario_tf]
-            scenario_scope_val = scope_options[scenario_scope]
-
-            # Get engagement candidates
-            candidates = get_engagement_candidates(
-                amended_portfolio=amended_portfolio,
-                time_frame=scenario_time_frame,
-                scope=scenario_scope_val,
-                top_n=20,
-            )
-
-            if not candidates.empty:
-                # Build display labels with impact score, sorted by descending impact
-                candidates = candidates.sort_values('impact_score', ascending=False)
-                total_impact = candidates['impact_score'].sum()
-                candidates['impact_pct'] = (
-                    (candidates['impact_score'] / total_impact * 100) if total_impact > 0 else 0
-                ).round(1)
-                candidates['display_label'] = (
-                    candidates['company_name'] + '  (' + candidates['impact_pct'].astype(str) + '% impact)'
+                # Timeframe/scope for scenario
+                scenario_tf = st.selectbox(
+                    "Timeframe",
+                    options=selected_timeframes,
+                    index=0,
+                    key="scenario_tf"
+                )
+                scenario_scope = st.selectbox(
+                    "Scope",
+                    options=selected_scopes,
+                    index=0,
+                    key="scenario_scope"
                 )
 
-                # Multi-select for companies
-                company_options = candidates['display_label'].tolist()
-                selected_labels = st.multiselect(
-                    "Select Companies to Engage",
-                    options=company_options,
-                    default=company_options[:3] if len(company_options) >= 3 else company_options,
-                    help="Companies sorted by descending impact on portfolio score"
-                )
+            with col2:
+                st.subheader("Engagement Candidates")
 
-                # Get company IDs for selected labels
-                engagement_ids = candidates[
-                    candidates['display_label'].isin(selected_labels)
-                ]['company_id'].tolist()
+                scenario_time_frame = timeframe_options[scenario_tf]
+                scenario_scope_val = scope_options[scenario_scope]
 
-                st.dataframe(
-                    candidates[candidates['display_label'].isin(selected_labels)].drop(
-                        columns=['display_label', 'impact_pct']
-                    ),
-                    width="stretch",
-                    height=200
-                )
-            else:
-                st.warning("No high-scoring companies found for engagement")
-                engagement_ids = []
-
-        # Run scenario
-        if st.button("🚀 Run Scenario Analysis", type="primary") and engagement_ids:
-            with st.spinner("Running scenario analysis..."):
-                scenario_scores, scenario_aggregated = run_scenario_analysis(
-                    _provider=provider,
-                    portfolio_df=portfolio_df,
-                    engagement_company_ids=engagement_ids,
-                    scenario_type=scenario_type,
-                    engagement_type=engagement_type,
-                    time_frames=time_frames,
-                    scopes=scopes,
-                    aggregation_method=aggregation_method,
-                    grouping=grouping,
-                    sbti_factor=sbti_factor,
-                    cta_file_path=cta_file_path,
-                )
-
-                # Calculate impact
-                impact = calculate_scenario_impact(
-                    original_aggregated=aggregated_scores,
-                    scenario_aggregated=scenario_aggregated,
+                # Get engagement candidates
+                candidates = get_engagement_candidates(
+                    amended_portfolio=amended_portfolio,
                     time_frame=scenario_time_frame,
                     scope=scenario_scope_val,
+                    top_n=20,
                 )
 
-                st.success("✅ Scenario analysis complete!")
-
-                # Display impact metrics
-                st.subheader("Scenario Impact")
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Original Score", f"{impact['original_score']}°C")
-                with col2:
-                    st.metric("Scenario Score", f"{impact['scenario_score']}°C")
-                with col3:
-                    st.metric(
-                        "Temperature Reduction",
-                        f"{impact['absolute_change']}°C",
-                        delta=f"{impact['percent_change']:.1f}%",
-                        delta_color="inverse"
+                if not candidates.empty:
+                    # Build display labels with impact score, sorted by descending impact
+                    candidates = candidates.sort_values('impact_score', ascending=False)
+                    total_impact = candidates['impact_score'].sum()
+                    candidates['impact_pct'] = (
+                        (candidates['impact_score'] / total_impact * 100) if total_impact > 0 else 0
+                    ).round(1)
+                    candidates['display_label'] = (
+                        candidates['company_name'] + '  (' + candidates['impact_pct'].astype(str) + '% impact)'
                     )
 
-                # Comparison chart
-                if grouping:
-                    comparison_df = compare_group_scores(
+                    # Multi-select for companies
+                    company_options = candidates['display_label'].tolist()
+                    selected_labels = st.multiselect(
+                        "Select Companies to Engage",
+                        options=company_options,
+                        default=company_options[:3] if len(company_options) >= 3 else company_options,
+                        help="Companies sorted by descending impact on portfolio score"
+                    )
+
+                    # Get company IDs for selected labels
+                    engagement_ids = candidates[
+                        candidates['display_label'].isin(selected_labels)
+                    ]['company_id'].tolist()
+
+                    st.dataframe(
+                        candidates[candidates['display_label'].isin(selected_labels)].drop(
+                            columns=['display_label', 'impact_pct']
+                        ),
+                        width="stretch",
+                        height=200
+                    )
+                else:
+                    st.warning("No high-scoring companies found for engagement")
+                    engagement_ids = []
+
+            # Run scenario
+            if st.button("🚀 Run Scenario Analysis", type="primary") and engagement_ids:
+                with st.spinner("Running scenario analysis..."):
+                    scenario_scores, scenario_aggregated = run_scenario_analysis(
+                        _provider=provider,
+                        portfolio_df=portfolio_df,
+                        engagement_company_ids=engagement_ids,
+                        scenario_type=scenario_type,
+                        engagement_type=engagement_type,
+                        time_frames=time_frames,
+                        scopes=scopes,
+                        aggregation_method=aggregation_method,
+                        sbti_factor=sbti_factor,
+                        cta_file_path=cta_file_path,
+                    )
+
+                    # Calculate impact
+                    impact = calculate_scenario_impact(
                         original_aggregated=aggregated_scores,
                         scenario_aggregated=scenario_aggregated,
                         time_frame=scenario_time_frame,
                         scope=scenario_scope_val,
                     )
 
-                    if not comparison_df.empty:
-                        st.subheader("Group Score Comparison")
-                        st.dataframe(comparison_df, width="stretch")
+                    st.success("✅ Scenario analysis complete!")
+
+                    # Display impact metrics
+                    st.subheader("Scenario Impact")
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Original Score", f"{impact['original_score']}°C")
+                    with col2:
+                        st.metric("Scenario Score", f"{impact['scenario_score']}°C")
+                    with col3:
+                        st.metric(
+                            "Temperature Reduction",
+                            f"{impact['absolute_change']}°C",
+                            delta=f"{impact['percent_change']:.1f}%",
+                            delta_color="inverse"
+                        )
 
     # Tab 5: Export Data
     with tab5:
