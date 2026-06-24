@@ -8,8 +8,42 @@ A Streamlit web application for analyzing portfolio alignment with climate goals
 - **Portfolio coverage** — Measure the share of portfolio assets with validated science-based targets (SBTi)
 - **Scenario analysis** — Model the impact of engagement strategies and target improvements
 - **Data editing** — Edit portfolio, company fundamentals, and targets inline via the UI
-- **Local persistence** — Save and reload datasets using a local SQLite database
-- **Sample data** — Built-in example dataset for quick exploration
+
+## Running the Application with Docker
+
+The recommended way to run this application is with Docker. This method ensures you have the correct environment and dependencies without needing to install Python or other packages on your system. Your data remains on your local machine.
+
+**Prerequisites:**
+*   Docker must be installed and running on your system. You can download it from the [official Docker website](https://www.docker.com/products/docker-desktop/).
+
+**Instructions:**
+
+1.  **Create a `docker-compose.yml` file:**
+    Create a new file named `docker-compose.yml` in the root of this project and add the following content:
+
+    ```yaml
+    services:
+      itr:
+        image: ghcr.io/wwf-sweden/wwf-itr-app:latest
+        ports:
+          - "8501:8501"
+        volumes:
+          - ./data:/app/data
+    ```
+
+2.  **Start the application:**
+    Open a terminal, navigate to the project directory, and run the following command:
+
+    ```bash
+    docker compose up
+    ```
+    This command will pull the latest application image from the GitHub Container Registry and start it.
+
+3.  **Access the application:**
+    Once the container is running, open your web browser and go to:
+    [http://localhost:8501](http://localhost:8501)
+
+Your portfolio data will be saved in the `data` directory on your local machine, so it will be preserved even if you stop and restart the container.
 
 ## Getting Started
 
