@@ -1,23 +1,22 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+FROM python:3.11
 
-# Set the working directory in the container
+# Set the working directory
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
+# Install dependencies
+# Using --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application's code into the container at /app
+# Copy the rest of the application code
 COPY . .
 
-# Make port 8501 available to the world outside this container
+# Expose the port Streamlit runs on
 EXPOSE 8501
 
-# Define environment variable
-ENV NAME World
-
-# Run app.py when the container launches
-CMD ["streamlit", "run", "app.py"]
+# Command to run the app
+# Use --server.enableCORS=false to avoid potential cross-origin issues
+# Use --server.runOnSave=false for production
+CMD ["streamlit", "run", "app.py", "--server.enableCORS=false", "--server.runOnSave=false"]
