@@ -574,7 +574,7 @@ def main():
                 edited_portfolio = st.data_editor(
                     st.session_state.portfolio_df,
                     num_rows="dynamic",
-                    width="stretch",
+                    use_container_width=True,
                     key="edit_portfolio",
                 )
                 col_apply, col_cancel = st.columns(2)
@@ -596,7 +596,7 @@ def main():
                         st.session_state.edit_portfolio_mode = False
                         st.rerun()
             else:
-                st.dataframe(st.session_state.portfolio_df, width="stretch", height=400)
+                st.dataframe(st.session_state.portfolio_df, use_container_width=True, height=400)
                 if st.button("✏️ Edit Portfolio", key="toggle_edit_portfolio"):
                     st.session_state.edit_portfolio_mode = True
                     st.rerun()
@@ -609,7 +609,7 @@ def main():
                 edited_fundamental = st.data_editor(
                     st.session_state.fundamental_df,
                     num_rows="dynamic",
-                    width="stretch",
+                    use_container_width=True,
                     key="edit_fundamental",
                 )
                 col_apply, col_cancel = st.columns(2)
@@ -631,7 +631,7 @@ def main():
                         st.session_state.edit_fundamental_mode = False
                         st.rerun()
             else:
-                st.dataframe(st.session_state.fundamental_df, width="stretch", height=400)
+                st.dataframe(st.session_state.fundamental_df, use_container_width=True, height=400)
                 if st.button("✏️ Edit Fundamentals", key="toggle_edit_fundamental"):
                     st.session_state.edit_fundamental_mode = True
                     st.rerun()
@@ -644,7 +644,7 @@ def main():
                 edited_target = st.data_editor(
                     st.session_state.target_df,
                     num_rows="dynamic",
-                    width="stretch",
+                    use_container_width=True,
                     key="edit_target",
                 )
                 col_apply, col_cancel = st.columns(2)
@@ -666,7 +666,7 @@ def main():
                         st.session_state.edit_target_mode = False
                         st.rerun()
             else:
-                st.dataframe(st.session_state.target_df, width="stretch", height=400)
+                st.dataframe(st.session_state.target_df, use_container_width=True, height=400)
                 if st.button("✏️ Edit Targets", key="toggle_edit_target"):
                     st.session_state.edit_target_mode = True
                     st.rerun()
@@ -728,12 +728,12 @@ def main():
             if 'calculation_run' not in st.session_state:
                 st.session_state.calculation_run = False
 
-            if st.button("▶️ Run Analysis", type="primary", width="stretch"):
+            if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
                 st.session_state.calculation_run = True
                 st.session_state["_committed_key"] = None  # force recalculation
 
             if st.session_state.calculation_run:
-                if st.button("🔄 Reset", width="stretch"):
+                if st.button("🔄 Reset", use_container_width=True):
                     st.session_state.calculation_run = False
                     st.session_state.pop("scoring_results", None)
                     st.session_state.pop("coverage_result", None)
@@ -911,13 +911,13 @@ def main():
         # Gauge charts
         st.plotly_chart(
             plot_portfolio_summary_metrics(portfolio_score, coverage if coverage is not None else 0),
-            width="stretch"
+            use_container_width=True
         )
 
         # Score matrix
         st.subheader("Temperature Scores by Timeframe & Scope")
         scores_df = get_aggregated_scores_df(aggregated_scores)
-        st.dataframe(scores_df, width="stretch")
+        st.dataframe(scores_df, use_container_width=True)
 
         # Portfolio data preview
         with st.expander("📋 View Portfolio Data"):
@@ -927,7 +927,7 @@ def main():
                     _pf_display[_col] = _pf_display[_col].apply(
                         lambda x: x.name if hasattr(x, "name") else str(x)
                     )
-            st.dataframe(_pf_display, width="stretch")
+            st.dataframe(_pf_display, use_container_width=True)
 
     # Tab 2: Hotspot Analysis
     with tab2:
@@ -1128,7 +1128,7 @@ def main():
         top_n = st.slider("Number of companies to show", 5, 30, 10, key="top_n")
 
         contrib_fig = plot_company_contributions(contributions, top_n=top_n)
-        st.plotly_chart(contrib_fig, width="stretch")
+        st.plotly_chart(contrib_fig, use_container_width=True)
 
         # Detailed table
         st.subheader("Company Details")
