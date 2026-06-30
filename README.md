@@ -45,7 +45,45 @@ The recommended way to run this application is with Docker. This method ensures 
 
 Your portfolio data will be saved in the `data` directory on your local machine, so it will be preserved even if you stop and restart the container.
 
-## Getting Started
+### Data Persistence with Docker
+
+By default, when you run the application using `docker compose up`, the SQLite database is stored inside the running container. This data will persist if you stop the container (with `docker compose stop` or `Ctrl+C`) and restart it later (`docker compose start`).
+
+However, the data will be **lost** if you remove the container, which happens when you run `docker compose down`.
+
+To ensure your saved datasets are not lost when you rebuild or remove the container, you should use a Docker volume to store the database file on your host machine.
+
+#### Using a Named Volume
+
+You can configure a **named volume** in your `docker-compose.yml` file. This is the recommended approach for robust data persistence.
+
+1.  Create or edit a `docker-compose.yml` file in the root of the project with the following content:
+
+    ```yaml
+    version: '3.8'
+
+    services:
+      app:
+        build: .
+        ports:
+          - "8501:8501"
+        volumes:
+          - itr_data:/app/data
+
+    volumes:
+      itr_data:
+    ```
+
+2.  Run the application using Docker Compose:
+
+    ```bash
+    docker compose up --build
+    ```
+
+Now, the `data` directory inside the container (where `itr_data.db` is stored) is mapped to a Docker-managed volume named `itr_data` on your host machine. This volume will persist even if you run `docker compose down`, keeping your database safe.
+
+
+## Getting Started - local install
 
 ### Prerequisites
 
