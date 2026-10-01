@@ -36,7 +36,14 @@ try:
                 "SBTi CTA file unavailable; commitment data will be missing: %s", exc
             )
             self.c = config
-            self.targets = _pd.DataFrame()
+            self.targets = _pd.DataFrame(
+                columns=[
+                    config.COL_COMPANY_NAME,
+                    config.COL_COMPANY_ISIN,
+                    config.COL_COMPANY_LEI,
+                    config.COL_TARGET,
+                ]
+            )
 
     _SBTi.__init__ = _safe_sbti_init
 except Exception:
