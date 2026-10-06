@@ -2,6 +2,7 @@
 Temperature scoring and portfolio aggregation utilities.
 Handles calculation of temperature scores at company and portfolio level.
 """
+import logging
 import pandas as pd
 import streamlit as st
 from typing import List, Optional
@@ -12,6 +13,41 @@ from ITR.portfolio_aggregation import PortfolioAggregationMethod
 from ITR.portfolio_coverage_tvp import PortfolioCoverageTVP
 from ITR.interfaces import ETimeFrames, EScope
 from ITR.data.excel import ExcelProvider
+
+# Tell the ITR library to use the locally cached CTA file and never attempt a
+# network download at runtime.  The file is pre-downloaded at Docker build time
+# (see Dockerfile) so it is baked into the image.
+PortfolioCoverageTVPConfig.USE_LOCAL_CTA = True
+
+# Safety net: if the pre-downloaded file is genuinely missing (e.g. the image
+# was built without network access), catch the resulting error gracefully so the
+# app still starts.  SBTi commitment columns will simply be absent.
+try:
+    import pandas as _pd
+    from ITR.data.sbti import SBTi as _SBTi
+
+    _orig_sbti_init = _SBTi.__init__
+
+    def _safe_sbti_init(self, config=PortfolioCoverageTVPConfig):
+        try:
+            _orig_sbti_init(self, config)
+        except Exception as exc:
+            logging.warning(
+                "SBTi CTA file unavailable; commitment data will be missing: %s", exc
+            )
+            self.c = config
+            self.targets = _pd.DataFrame(
+                columns=[
+                    config.COL_COMPANY_NAME,
+                    config.COL_COMPANY_ISIN,
+                    config.COL_COMPANY_LEI,
+                    config.COL_TARGET,
+                ]
+            )
+
+    _SBTi.__init__ = _safe_sbti_init
+except Exception:
+    pass  # ITR version without SBTi class – nothing to patch
 
 
 # Mapping for UI display names
