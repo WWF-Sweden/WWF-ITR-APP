@@ -308,6 +308,30 @@ data will be processed on external servers.
 Without this secret, the app assumes it is running locally and no
 warning is shown.
 
+## Updating the WWF-ITR dependency
+
+Dependabot checks PyPI for new published releases of `WWF-ITR` on weekdays
+at 08:00 Europe/Stockholm. It monitors only this dependency and opens a PR
+updating the exact version in `requirements.txt`. Changes in the ITR-tool
+repository alone do not trigger a dependency update.
+
+The PR runs the app's CTA integration tests with the proposed package version.
+Review and merge the PR to `main` to publish a new image to
+`ghcr.io/wwf-sweden/wwf-itr-app:latest`. The publishing workflow also runs the
+tests and only builds and pushes the image if they pass. There is no automatic
+merge. Configure a branch protection rule requiring the CTA integration test
+check if failed tests should prevent merging.
+
+These workflows and the Dependabot configuration take effect after they are
+merged to the repository's default branch. No cross-repository token or
+notification from ITR-tool is needed.
+
+To update an existing Docker installation after the image has been published:
+
+```sh
+docker compose up -d --pull always
+```
+
 ## License
 
 See [LICENSE](LICENSE).
