@@ -3,6 +3,8 @@ name: Publish Docker image to ghcr.io
 on:
   workflow_dispatch:        # manual trigger from GitHub Actions UI
   push:
+    branches:
+      - main
     tags:
       - "v*"                # triggers on version tags like v1.0.0
 
@@ -33,6 +35,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: | 
+            latest=false
           tags: |
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}

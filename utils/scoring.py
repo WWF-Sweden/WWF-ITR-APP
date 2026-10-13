@@ -2,52 +2,18 @@
 Temperature scoring and portfolio aggregation utilities.
 Handles calculation of temperature scores at company and portfolio level.
 """
-import logging
 import pandas as pd
 import streamlit as st
 from typing import List, Optional
 
 from ITR.temperature_score import TemperatureScore, Scenario, ScenarioType, EngagementType
-from ITR.configs import TemperatureScoreConfig, PortfolioCoverageTVPConfig
+from ITR.configs import TemperatureScoreConfig
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
 from ITR.portfolio_coverage_tvp import PortfolioCoverageTVP
 from ITR.interfaces import ETimeFrames, EScope
 from ITR.data.excel import ExcelProvider
 
-# Tell the ITR library to use the locally cached CTA file and never attempt a
-# network download at runtime.  The file is pre-downloaded at Docker build time
-# (see Dockerfile) so it is baked into the image.
-PortfolioCoverageTVPConfig.USE_LOCAL_CTA = True
-
-# Safety net: if the pre-downloaded file is genuinely missing (e.g. the image
-# was built without network access), catch the resulting error gracefully so the
-# app still starts.  SBTi commitment columns will simply be absent.
-try:
-    import pandas as _pd
-    from ITR.data.sbti import SBTi as _SBTi
-
-    _orig_sbti_init = _SBTi.__init__
-
-    def _safe_sbti_init(self, config=PortfolioCoverageTVPConfig):
-        try:
-            _orig_sbti_init(self, config)
-        except Exception as exc:
-            logging.warning(
-                "SBTi CTA file unavailable; commitment data will be missing: %s", exc
-            )
-            self.c = config
-            self.targets = _pd.DataFrame(
-                columns=[
-                    config.COL_COMPANY_NAME,
-                    config.COL_COMPANY_ISIN,
-                    config.COL_COMPANY_LEI,
-                    config.COL_TARGET,
-                ]
-            )
-
-    _SBTi.__init__ = _safe_sbti_init
-except Exception:
-    pass  # ITR version without SBTi class – nothing to patch
+from utils.cta import local_cta_config, temperature_cta_context, validate_cta
 
 
 # Mapping for UI display names
@@ -102,6 +68,7 @@ def calculate_temperature_scores(
     sbti_factor: float = 1.0,
     cta_file_path: Optional[str] = None,
     data_hash: Optional[str] = None,
+    cta_hash: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Calculate temperature scores for all companies in portfolio.
@@ -137,23 +104,26 @@ def calculate_temperature_scores(
         if EScope.S2 not in _scopes:
             _scopes.append(EScope.S2)
 
-    TemperatureScoreConfig.SBTI_FACTOR = sbti_factor
+    class ScoreConfig(TemperatureScoreConfig):
+        SBTI_FACTOR = sbti_factor
 
     ts_kwargs = dict(
         time_frames=time_frames,
         scopes=_scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
+        config=ScoreConfig,
     )
     if sbti_factor != 1.0 and cta_file_path is not None:
         ts_kwargs["cta_file_path"] = cta_file_path
 
     temperature_score = TemperatureScore(**ts_kwargs)
     
-    amended_portfolio = temperature_score.calculate(
-        data_providers=[_provider],
-        portfolio=_companies
-    )
+    with temperature_cta_context(cta_file_path):
+        amended_portfolio = temperature_score.calculate(
+            data_providers=[_provider],
+            portfolio=_companies
+        )
     
     return amended_portfolio
 
@@ -179,13 +149,15 @@ def aggregate_portfolio_scores(
     Returns:
         ScoreAggregation object with portfolio scores
     """
-    TemperatureScoreConfig.SBTI_FACTOR = sbti_factor
+    class ScoreConfig(TemperatureScoreConfig):
+        SBTI_FACTOR = sbti_factor
 
     temperature_score = TemperatureScore(
         time_frames=time_frames,
         scopes=scopes,
         aggregation_method=aggregation_method,
         grouping=grouping,
+        config=ScoreConfig,
     )
     
     return temperature_score.aggregate_scores(amended_portfolio)
@@ -227,14 +199,10 @@ def calculate_portfolio_coverage(
     Returns:
         Coverage percentage
     """
-    if cta_file_path is not None:
-        class _CustomCTAConfig(PortfolioCoverageTVPConfig):
-            FILE_TARGETS_CUSTOM_PATH = cta_file_path
-            USE_LOCAL_CTA = True
-        config = _CustomCTAConfig
-    else:
-        config = PortfolioCoverageTVPConfig
-    portfolio_coverage_tvp = PortfolioCoverageTVP(config)
+    if cta_file_path is None:
+        raise ValueError("A validated CTA file is required for portfolio coverage")
+    config = local_cta_config(validate_cta(cta_file_path))
+    portfolio_coverage_tvp = PortfolioCoverageTVP(config, cta_file_path=cta_file_path)
     coverage = portfolio_coverage_tvp.get_portfolio_coverage(
         amended_portfolio.copy(),
         aggregation_method

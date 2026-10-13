@@ -5,6 +5,7 @@ Streamlit Application
 This app allows users to analyze portfolios' and companies' GHG emissions
 reduction targets using the CDP-WWF Temperature Scoring Methodology.
 """
+from datetime import datetime
 import hashlib
 import os
 import streamlit as st
@@ -24,7 +25,6 @@ logger = logging.getLogger(__name__)
 import ITR
 from ITR.interfaces import ETimeFrames, EScope
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
-from ITR.configs import PortfolioCoverageTVPConfig
 
 # Import local utilities
 from utils.data_loader import (
@@ -49,6 +49,7 @@ from utils.data_loader import (
     prepare_provider_scores_df,
 )
 from db.database import init_db
+from utils.cta import (CTAError, resolve_cta, refresh_cta, cta_fingerprint, store_cta_upload)
 from utils.scoring import (
     get_timeframe_options,
     get_scope_options,
@@ -411,7 +412,9 @@ def main():
             _needs_cta = sbti_factor != 1.0 or calculate_coverage
             st.session_state["_prev_needs_cta"] = st.session_state.get("_needs_cta_last", False)
             st.session_state["_needs_cta_last"] = _needs_cta
-            cta_file_path = None  # default: auto-download (or not needed)
+            cta_file_path = None
+            cta_hash = None
+            cta_error = None
 
             if _needs_cta:
                 st.markdown("#### CTA File")
@@ -421,50 +424,52 @@ def main():
                     index=0,
                     help="The CTA file lists companies with validated SBTi targets",
                 )
-
+                custom_path = None
                 if cta_source == "Upload custom file":
                     cta_upload = st.file_uploader(
-                        "Upload CTA Excel file",
-                        type=["xlsx", "xls"],
-                        key="cta_file",
+                        "Upload CTA Excel file", type=["xlsx", "xls"], key="cta_file",
                     )
-                    if cta_upload is not None:
-                        import tempfile as _tmpmod
-                        _cta_tmp = _tmpmod.NamedTemporaryFile(delete=False, suffix=".xlsx")
-                        _cta_tmp.write(cta_upload.getvalue())
-                        _cta_tmp.close()
-                        cta_file_path = _cta_tmp.name
-                    else:
-                        st.warning("⚠️ Please upload a CTA file or switch to auto-download")
+                    custom_path = store_cta_upload(st.session_state, cta_upload)
+                else:
+                    store_cta_upload(st.session_state, None)
 
                 offline_mode = st.checkbox(
-                    "Offline mode",
-                    value=False,
-                    help=(
-                        "When enabled, uses a cached/bundled CTA file instead of "
-                        "downloading from SBTi. Useful behind firewalls."
-                    ),
+                    "Offline mode", value=False,
+                    help="Use cached or bundled CTA data without downloading. Uploaded files always work offline.",
                 )
-                PortfolioCoverageTVPConfig.OFFLINE = offline_mode
-                import os as _os
-                if offline_mode:
-                    _os.environ["ITR_OFFLINE"] = "1"
-                else:
-                    _os.environ.pop("ITR_OFFLINE", None)
+                if cta_source == "Auto-download from SBTi":
+                    if st.button("Update CTA from SBTi", disabled=offline_mode):
+                        try:
+                            with st.spinner("Updating CTA from SBTi..."):
+                                refresh_cta()
+                            st.session_state.pop("coverage_result", None)
+                            st.success("CTA file updated from SBTi.")
+                        except CTAError as exc:
+                            st.error(str(exc))
+                try:
+                    if cta_source == "Upload custom file" and custom_path is None:
+                        raise CTAError("Please upload a CTA file or select auto-download.")
+                    cta_file_path, cta_warning = resolve_cta(custom_path, offline_mode)
+                    cta_hash = cta_fingerprint(cta_file_path)
+                    if cta_warning:
+                        st.warning(cta_warning)
+                    modified = datetime.fromtimestamp(os.path.getmtime(cta_file_path)).astimezone()
+                    st.caption(f"CTA file: {cta_file_path}")
+                    st.caption(f"Last modified: {modified:%Y-%m-%d %H:%M:%S %Z}")
+                except CTAError as exc:
+                    cta_error = str(exc)
+                    st.error(cta_error)
             else:
-                # Reset offline state when CTA is not needed
-                PortfolioCoverageTVPConfig.OFFLINE = False
-                import os as _os
-                _os.environ.pop("ITR_OFFLINE", None)
+                store_cta_upload(st.session_state, None)
         else:
             # Pre-scored mode — SBTi settings not applicable
             sbti_factor = 1.0
             calculate_coverage = False
             cta_file_path = None
-            PortfolioCoverageTVPConfig.OFFLINE = False
-            import os as _os
-            _os.environ.pop("ITR_OFFLINE", None)
-    
+            cta_hash = None
+            cta_error = None
+            store_cta_upload(st.session_state, None)
+
     # ------------------------------------------------------------------
     # Guard: show landing page if no data loaded yet
     # ------------------------------------------------------------------
@@ -768,9 +773,9 @@ def main():
             tuple(sc.value for sc in scopes),
             aggregation_method.value if hasattr(aggregation_method, 'value') else str(aggregation_method),
             sbti_factor,
-            cta_file_path,
+            (cta_file_path, cta_hash) if sbti_factor != 1.0 else None,
         )
-        _full_key = (_score_key, calculate_coverage)
+        _full_key = (_score_key, calculate_coverage, cta_file_path, cta_hash)
 
         # If parameters changed since the last committed run, pause and prompt the
         # user to click Run Analysis again — prevents immediate recalculation on
@@ -781,6 +786,10 @@ def main():
         if _committed_key is not None and _committed_key != _score_key:
             st.session_state.calculation_run = False
             st.warning("⚙️ Parameters changed — click **▶️ Run Analysis** to recalculate")
+            st.stop()
+
+        if sbti_factor != 1.0 and cta_error:
+            st.error(f"Temperature scores could not be calculated: {cta_error}")
             st.stop()
 
         # --- Temperature scores + aggregation (expensive) ---
@@ -797,8 +806,9 @@ def main():
                     scopes=scopes,
                     aggregation_method=aggregation_method,
                     sbti_factor=sbti_factor,
-                    cta_file_path=cta_file_path,
+                    cta_file_path=cta_file_path if sbti_factor != 1.0 else None,
                     data_hash=_data_hash,
+                    cta_hash=cta_hash if sbti_factor != 1.0 else None,
                 )
                 aggregated_scores = aggregate_portfolio_scores(
                     amended_portfolio=amended_portfolio,
@@ -815,18 +825,25 @@ def main():
 
         # --- Portfolio coverage (fast, separate cache) ---
         _cov_cached = st.session_state.get("coverage_result")
+        coverage = None
         if calculate_coverage:
-            if _cov_cached is not None and _cov_cached.get("key") == _full_key:
+            if cta_error:
+                st.session_state.pop("coverage_result", None)
+                st.error(f"Portfolio coverage could not be calculated: {cta_error}")
+            elif _cov_cached is not None and _cov_cached.get("key") == _full_key:
                 coverage = _cov_cached["coverage"]
             else:
-                with st.spinner("Calculating portfolio coverage..."):
-                    coverage = calculate_portfolio_coverage(
-                        amended_portfolio, aggregation_method,
-                        cta_file_path=cta_file_path,
-                    )
-                st.session_state.coverage_result = {"key": _full_key, "coverage": coverage}
-        else:
-            coverage = None
+                try:
+                    with st.spinner("Calculating portfolio coverage..."):
+                        coverage = calculate_portfolio_coverage(
+                            amended_portfolio, aggregation_method,
+                            cta_file_path=cta_file_path,
+                        )
+                    st.session_state.coverage_result = {"key": _full_key, "coverage": coverage}
+                except Exception as exc:
+                    logger.exception("Portfolio coverage failed")
+                    st.session_state.pop("coverage_result", None)
+                    st.error(f"Portfolio coverage could not be calculated: {exc}")
 
         st.session_state["_committed_key"] = _score_key
 
@@ -910,7 +927,7 @@ def main():
 
         # Gauge charts
         st.plotly_chart(
-            plot_portfolio_summary_metrics(portfolio_score, coverage if coverage is not None else 0),
+            plot_portfolio_summary_metrics(portfolio_score, coverage),
             use_container_width=True
         )
 
@@ -1272,7 +1289,8 @@ def main():
                         scopes=scopes,
                         aggregation_method=aggregation_method,
                         sbti_factor=sbti_factor,
-                        cta_file_path=cta_file_path,
+                        cta_file_path=cta_file_path if sbti_factor != 1.0 else None,
+                        cta_hash=cta_hash if sbti_factor != 1.0 else None,
                     )
 
                     # Calculate impact

@@ -44,6 +44,6 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.3
 urllib3==2.6.3
-WWF-ITR==1.5.3
+WWF-ITR==1.7.2
 xlrd==2.0.1
 xlsxwriter==3.2.9

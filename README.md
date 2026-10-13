@@ -145,6 +145,21 @@ volumes:
 This maps the application's `/app/data` directory inside the container
 to the `data` directory on your local machine.
 
+CTA downloads are stored in `/app/data/cta/current-Companies-Taking-Action.xlsx`
+and persist through this same volume. The app uses cached CTA data for up to
+one week, then attempts a new download. **Update CTA from SBTi** forces an
+update; a failed or invalid download preserves the previous file. **Offline
+mode** uses cached or bundled data without downloading. The sidebar displays
+the actual CTA file and its modification time, and warns when bundled data is used.
+
+Users can also select **Upload custom file** and upload a CTA Excel file in
+Docker or Streamlit Cloud. Uploaded files never require a download and are
+kept for the active session; replacing or removing an upload deletes its previous
+temporary file. Missing or invalid CTA data is reported as an error rather than
+zero portfolio coverage. Outside Docker, the default cache is `data/cta`; set
+`ITR_CTA_PATH` to override it. Streamlit Cloud storage should be treated as
+temporary across app restarts.
+
 The application's SQLite database and other data stored in this
 directory will therefore persist even if you:
 

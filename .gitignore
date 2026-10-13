@@ -16,3 +16,6 @@ data/*.db
 # Virtual environments
 .venv/
 venv/
+
+# Downloaded CTA cache
+data/cta/

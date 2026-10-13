@@ -12,6 +12,7 @@ from ITR.configs import TemperatureScoreConfig
 from ITR.portfolio_aggregation import PortfolioAggregationMethod
 from ITR.interfaces import ETimeFrames, EScope
 from ITR.data.excel import ExcelProvider
+from utils.cta import temperature_cta_context
 
 
 # Scenario type options for UI
@@ -78,6 +79,7 @@ def run_scenario_analysis(
     grouping: Optional[List[str]] = None,
     sbti_factor: float = 1.0,
     cta_file_path: Optional[str] = None,
+    cta_hash: Optional[str] = None,
 ) -> tuple:
     """
     Run a what-if scenario analysis.
@@ -140,7 +142,8 @@ def run_scenario_analysis(
         if EScope.S2 not in _scopes:
             _scopes.append(EScope.S2)
 
-    TemperatureScoreConfig.SBTI_FACTOR = sbti_factor
+    class ScoreConfig(TemperatureScoreConfig):
+        SBTI_FACTOR = sbti_factor
 
     ts_kwargs = dict(
         time_frames=time_frames,
@@ -148,6 +151,7 @@ def run_scenario_analysis(
         aggregation_method=aggregation_method,
         grouping=grouping,
         scenario=scenario,
+        config=ScoreConfig,
     )
     if sbti_factor != 1.0 and cta_file_path is not None:
         ts_kwargs["cta_file_path"] = cta_file_path
@@ -155,10 +159,11 @@ def run_scenario_analysis(
     temperature_score = TemperatureScore(**ts_kwargs)
     
     scenario_companies = ITR.utils.dataframe_to_portfolio(scenario_portfolio)
-    scenario_scores = temperature_score.calculate(
-        data_providers=[_provider],
-        portfolio=scenario_companies
-    )
+    with temperature_cta_context(cta_file_path):
+        scenario_scores = temperature_score.calculate(
+            data_providers=[_provider],
+            portfolio=scenario_companies
+        )
     scenario_aggregated = temperature_score.aggregate_scores(scenario_scores)
     
     return scenario_scores, scenario_aggregated

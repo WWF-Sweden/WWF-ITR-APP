@@ -270,7 +270,7 @@ def plot_scenario_comparison(
 
 def plot_portfolio_summary_metrics(
     portfolio_score: float,
-    coverage: float,
+    coverage: Optional[float],
     target_score: float = 1.5,
 ) -> go.Figure:
     """
@@ -313,22 +313,26 @@ def plot_portfolio_summary_metrics(
         },
     ), row=1, col=1)
     
-    # Coverage gauge
-    fig.add_trace(go.Indicator(
-        mode="gauge+number",
-        value=coverage,
-        number={'suffix': '%'},
-        gauge={
-            'axis': {'range': [0, 100]},
-            'bar': {'color': 'darkblue'},
-            'steps': [
-                {'range': [0, 25], 'color': 'red'},
-                {'range': [25, 50], 'color': 'orange'},
-                {'range': [50, 75], 'color': 'yellow'},
-                {'range': [75, 100], 'color': 'lightgreen'},
-            ],
-        },
-    ), row=1, col=2)
+    if coverage is None:
+        fig.add_annotation(text="Not calculated", x=0.8, y=0.5,
+                           xref="paper", yref="paper", showarrow=False)
+    else:
+        # Coverage gauge
+        fig.add_trace(go.Indicator(
+            mode="gauge+number",
+            value=coverage,
+            number={'suffix': '%'},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': 'darkblue'},
+                'steps': [
+                    {'range': [0, 25], 'color': 'red'},
+                    {'range': [25, 50], 'color': 'orange'},
+                    {'range': [50, 75], 'color': 'yellow'},
+                    {'range': [75, 100], 'color': 'lightgreen'},
+                ],
+            },
+        ), row=1, col=2)
     
     fig.update_layout(height=300)
     
