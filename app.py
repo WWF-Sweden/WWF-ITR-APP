@@ -174,7 +174,7 @@ def main():
         selected_dataset = None
 
         if data_source == "Sample Data":
-            st.info("📁 Built-in example data will be used for demonstration.")
+            st.info("📁 Example data with 360 fictional companies will be used for demonstration. Real identifiers are used only to test coverage.")
             _ready_to_load = True
 
         elif data_source == "Upload Custom Data":

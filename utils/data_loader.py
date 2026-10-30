@@ -6,6 +6,11 @@ from asyncio.log import logger
 import os
 import tempfile
 import urllib.request
+import urllib.parse
+import json
+import hashlib
+from zipfile import BadZipFile
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 from typing import Dict, Optional, Tuple
@@ -124,36 +129,54 @@ def clean_target_df(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     return cleaned, int(invalid.sum())
 
 
-@st.cache_data(show_spinner="Loading sample data...")
+@st.cache_data(show_spinner="Loading sample data...", ttl=3600)
 def download_sample_data(data_dir: str = "data") -> Tuple[str, str]:
+    """Fetch a matched pair from ITR-tool, with an explicit bundled fallback.
+
+    Both downloads use one commit. Content-addressed paths also invalidate the
+    provider/portfolio caches when upstream contents change. ITR_EXAMPLES_REF
+    can pin a release/commit instead of following main.
     """
-    Download sample data files from GitHub if not present locally.
-    
-    Args:
-        data_dir: Directory to store downloaded files
-        
-    Returns:
-        Tuple of (provider_path, portfolio_path)
-    """
-    if not os.path.isdir(data_dir):
-        os.makedirs(data_dir)
-    
-    provider_path = os.path.join(data_dir, "data_provider_example2.xlsx")
-    portfolio_path = os.path.join(data_dir, "example_portfolio2.csv")
-    
-    if not os.path.isfile(provider_path):
-        urllib.request.urlretrieve(
-            "https://github.com/WWF-Sweden/ITR-tool/raw/main/examples/data/data_provider_example.xlsx",
-            provider_path
-        )
-    
-    if not os.path.isfile(portfolio_path):
-        urllib.request.urlretrieve(
-            "https://github.com/WWF-Sweden/ITR-tool/raw/main/examples/data/example_portfolio.csv",
-            portfolio_path
-        )
-    
-    return provider_path, portfolio_path
+    names = ("data_provider_example_360.xlsx", "example_portfolio_360.csv")
+    bundled = Path(__file__).resolve().parents[1] / "data"
+    try:
+        ref = os.environ.get("ITR_EXAMPLES_REF", "main")
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/WWF-Sweden/ITR-tool/commits/{urllib.parse.quote(ref, safe='')}",
+            headers={"User-Agent": "WWF-ITR-App"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            revision = json.load(response)["sha"]
+        payloads = []
+        for name in names:
+            with urllib.request.urlopen(
+                f"https://raw.githubusercontent.com/WWF-Sweden/ITR-tool/{revision}/examples/data/{name}",
+                timeout=20,
+            ) as response:
+                payloads.append(response.read())
+        # Validate the complete pair before exposing either file to the app.
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in names]
+            for path, payload in zip(paths, payloads):
+                path.write_bytes(payload)
+            provider = ExcelProvider(path=str(paths[0]))
+            portfolio = pd.read_csv(paths[1])
+            if set(_PORTFOLIO_REQUIRED_COLS) - set(portfolio.columns):
+                raise ValueError("Example portfolio is missing required columns")
+            ids = set(provider.data['fundamental_data']['company_id'])
+            if portfolio.empty or not set(portfolio.company_id).issubset(ids):
+                raise ValueError("Example files do not contain matching companies")
+        digest = hashlib.sha256(b''.join(payloads)).hexdigest()[:20]
+        cache = Path(data_dir) / "example_cache" / digest
+        cache.mkdir(parents=True, exist_ok=True)
+        for name, payload in zip(names, payloads):
+            (cache / name).write_bytes(payload)
+        return tuple(str(cache / name) for name in names)
+    except (OSError, ValueError, KeyError, BadZipFile) as exc:
+        paths = tuple(str(bundled / name) for name in names)
+        if not all(Path(path).is_file() for path in paths):
+            raise RuntimeError("Could not download examples and no bundled pair is available") from exc
+        st.warning(f"Using bundled example files because ITR-tool examples could not be downloaded: {exc}")
+        return paths
 
 
 @st.cache_resource(show_spinner="Loading provider data...")

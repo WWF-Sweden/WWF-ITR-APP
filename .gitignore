@@ -19,3 +19,8 @@ venv/
 
 # Downloaded CTA cache
 data/cta/
+data/example_cache/
+outputs/**/node_modules
+outputs/example-360/inputs.json
+outputs/example-360/*.png
+outputs/example-360/*.inspect.ndjson
