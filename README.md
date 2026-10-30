@@ -4,6 +4,20 @@ A Streamlit web application for analyzing portfolio alignment with
 climate goals using the [CDP-WWF Temperature Scoring
 Methodology](https://wwfint.awsassets.panda.org/downloads/cdp-wwf-temperature-scoring-methodology---september-2024.pdf).
 
+
+## Try the App Online — No Installation Required
+
+The easiest way to explore the WWF ITR Tool is to use our online demo, hosted on Streamlit Community Cloud.
+
+**[🚀 Launch the WWF ITR App](https://wwf-itr.streamlit.app/)**
+
+No installation, Docker setup, or Python environment is required. Simply open the app in your browser and select **Sample Data** to explore its features, calculate portfolio temperature scores, and experiment with different scenarios.
+
+**Data privacy:** The online version is intended for demonstration and testing with sample or publicly available data. Do not upload confidential, sensitive, or proprietary portfolio information, as uploaded data is processed on external cloud servers.
+
+**Working with your own data?** We recommend running the application locally using Docker, where your application data remains on your own computer. See [Running the Application with Docker](#running-the-application-with-docker) below.
+
+
 ## Features
 
 -   **Temperature scoring** --- Calculate implied temperature rise (ITR)
