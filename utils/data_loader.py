@@ -3,6 +3,7 @@ Data loading utilities for WWF ITR Tool.
 Handles Excel/CSV file loading, data validation, and database persistence.
 """
 from asyncio.log import logger
+import io
 import os
 import tempfile
 import urllib.request
@@ -179,7 +180,6 @@ def download_sample_data(data_dir: str = "data") -> Tuple[str, str]:
         return paths
 
 
-@st.cache_resource(show_spinner="Loading provider data...")
 def load_provider_data(file_path: str) -> ExcelProvider:
     """
     Load fundamental and target data from Excel file.
@@ -193,7 +193,6 @@ def load_provider_data(file_path: str) -> ExcelProvider:
     return ExcelProvider(path=file_path)
 
 
-@st.cache_data(show_spinner="Loading portfolio data...")
 def load_portfolio_data(file_path: str) -> pd.DataFrame:
     """
     Load portfolio data from CSV file.
@@ -208,39 +207,25 @@ def load_portfolio_data(file_path: str) -> pd.DataFrame:
     cleaned, _ = clean_portfolio_df(df)
     return cleaned
 
-def load_uploaded_provider_file(uploaded_file):
-    """Save uploaded provider file to temporary location."""
-    # Use system temp directory instead of uploads folder
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
-    
-    return tmp_path
+def load_uploaded_provider_file(uploaded_file) -> Dict[str, pd.DataFrame]:
+    """Read only the required provider sheets, without creating a disk copy."""
+    return extract_provider_dataframes(io.BytesIO(uploaded_file.getvalue()))
 
 
 def load_uploaded_portfolio_file(uploaded_file):
-    """Save uploaded portfolio file to temporary location and load as DataFrame."""
-    # Use system temp directory
+    """Read the uploaded portfolio in memory without creating a disk copy."""
     suffix = '.csv' if uploaded_file.name.endswith('.csv') else '.xlsx'
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
-    
-    # Read the file into DataFrame
+    buffer = io.BytesIO(uploaded_file.getvalue())
     try:
         if suffix == '.csv':
-            df = pd.read_csv(tmp_path)
+            df = pd.read_csv(buffer)
         else:
-            df = pd.read_excel(tmp_path)
+            df = pd.read_excel(buffer)
         cleaned, _ = clean_portfolio_df(df)
         return cleaned
     except Exception as e:
         logger.error(f"Error reading uploaded portfolio file: {e}")
         raise
-    finally:
-        # Clean up temp file
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 def convert_portfolio_to_companies(portfolio_df: pd.DataFrame) -> list:
     """
@@ -299,7 +284,9 @@ def extract_provider_dataframes(file_path: str) -> Dict[str, pd.DataFrame]:
     Returns:
         Dict with keys 'fundamental_data' and 'target_data'.
     """
-    sheets = pd.read_excel(file_path, sheet_name=None, skiprows=0)
+    sheets = pd.read_excel(
+        file_path, sheet_name=["fundamental_data", "target_data"], skiprows=0,
+    )
     return {
         "fundamental_data": sheets.get("fundamental_data", pd.DataFrame()),
         "target_data": sheets.get("target_data", pd.DataFrame()),
@@ -311,8 +298,7 @@ def create_provider_from_dataframes(
     target_df: pd.DataFrame,
 ) -> ExcelProvider:
     """
-    Reconstruct an ExcelProvider from (possibly edited) DataFrames
-    by writing them into a temporary Excel file.
+    Reconstruct an ExcelProvider using an in-memory Excel workbook.
 
     Args:
         fundamental_df: Company fundamentals data.
@@ -321,17 +307,15 @@ def create_provider_from_dataframes(
     Returns:
         ExcelProvider instance ready for scoring.
     """
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    tmp_path = tmp.name
-    tmp.close()
-    try:
+    with io.BytesIO() as buffer:
         # Defensive cleaning before writing to Excel for ExcelProvider
         fundamental_df, _ = clean_fundamental_df(fundamental_df)
         target_df, _ = clean_target_df(target_df)
-        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             fundamental_df.to_excel(writer, sheet_name="fundamental_data", index=False)
             target_df.to_excel(writer, sheet_name="target_data", index=False)
-        provider = ExcelProvider(path=tmp_path)
+        buffer.seek(0)
+        provider = ExcelProvider(path=buffer)
 
         # Excel round-trip converts "" → empty cell → NaN.  ExcelProvider's
         # get_company_data fills *most* string columns but misses 'region'.
@@ -347,10 +331,6 @@ def create_provider_from_dataframes(
                 fund[col] = fund[col].fillna("")
 
         return provider
-    finally:
-        # ExcelProvider reads everything into memory, so we can clean up
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -425,18 +405,9 @@ _PROVIDER_SCORES_KNOWN_COLS = {
 
 def load_uploaded_provider_scores_file(uploaded_file) -> pd.DataFrame:
     """
-    Save an uploaded pre-scored Excel file to a temp location, read it,
-    and return the raw DataFrame.
+    Read an uploaded pre-scored Excel file without creating a disk copy.
     """
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-        tmp.write(uploaded_file.getvalue())
-        tmp_path = tmp.name
-    try:
-        df = pd.read_excel(tmp_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-    return df
+    return pd.read_excel(io.BytesIO(uploaded_file.getvalue()))
 
 
 def validate_provider_scores_data(df: pd.DataFrame) -> Tuple[bool, list]:

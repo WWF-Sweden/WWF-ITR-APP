@@ -3,7 +3,6 @@ Temperature scoring and portfolio aggregation utilities.
 Handles calculation of temperature scores at company and portfolio level.
 """
 import pandas as pd
-import streamlit as st
 from typing import List, Optional
 
 from ITR.temperature_score import TemperatureScore, Scenario, ScenarioType, EngagementType
@@ -57,7 +56,6 @@ def get_aggregation_options() -> dict:
     return AGGREGATION_OPTIONS
 
 
-@st.cache_data(show_spinner="Calculating temperature scores...")
 def calculate_temperature_scores(
     _provider: ExcelProvider,
     _companies: list,

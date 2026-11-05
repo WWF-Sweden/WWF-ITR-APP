@@ -110,19 +110,33 @@ def resolve_cta(custom_path=None, offline=False):
 
 
 def store_cta_upload(state, upload):
-    """Reuse an unchanged upload and remove the previous session temporary file."""
+    """Own CTA files through a session directory, cleaned when released.
+
+    Replacement/removal cleans immediately. Normal session disposal releases
+    the TemporaryDirectory owner; abrupt process termination can leave files.
+    """
     content = upload.getvalue() if upload is not None else None
     digest = hashlib.sha256(content).hexdigest() if content is not None else None
     previous = state.get("_cta_upload_path")
     if digest == state.get("_cta_upload_digest") and previous and Path(previous).exists():
         return previous
     replacement = None
+    directory = None
     if content is not None:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(upload.name).suffix) as handle:
-            handle.write(content)
-            replacement = handle.name
-    if previous:
+        directory = tempfile.TemporaryDirectory(prefix="itr-cta-")
+        try:
+            path = Path(directory.name) / ("cta" + Path(upload.name).suffix)
+            path.write_bytes(content)
+            replacement = str(path)
+        except BaseException:
+            directory.cleanup()
+            raise
+    previous_directory = state.get("_cta_upload_directory")
+    if previous_directory is not None:
+        previous_directory.cleanup()
+    elif previous:
         Path(previous).unlink(missing_ok=True)
+    state["_cta_upload_directory"] = directory
     state["_cta_upload_path"] = replacement
     state["_cta_upload_digest"] = digest
     return replacement
