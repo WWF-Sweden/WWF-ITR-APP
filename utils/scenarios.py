@@ -3,7 +3,11 @@ Scenario analysis utilities for WWF ITR Tool.
 Handles what-if scenarios and engagement modeling.
 """
 import pandas as pd
-import streamlit as st
+from collections import OrderedDict
+from datetime import datetime
+import hashlib
+from pathlib import Path
+import pickle
 from typing import List, Optional
 
 import ITR
@@ -27,6 +31,11 @@ ENGAGEMENT_TYPE_OPTIONS = {
     "Set Targets (1.75°C - Well Below 2°C)": EngagementType.SET_TARGETS,
     "Set SBTi Targets (1.5°C)": EngagementType.SET_SBTI_TARGETS,
 }
+
+# Private to each supplied session. The byte budget covers serialized results,
+# not the entire Python process or the currently displayed analysis.
+SCENARIO_CACHE_MAX_ENTRIES = 3
+SCENARIO_CACHE_MAX_BYTES = 32 * 1024 * 1024
 
 
 def get_scenario_options() -> dict:
@@ -66,8 +75,76 @@ def create_scenario(
     return scenario
 
 
-@st.cache_data(show_spinner="Running scenario analysis...")
 def run_scenario_analysis(
+    _provider: ExcelProvider,
+    portfolio_df: pd.DataFrame,
+    engagement_company_ids: List[str],
+    scenario_type: ScenarioType,
+    engagement_type: EngagementType,
+    time_frames: List[ETimeFrames],
+    scopes: List[EScope],
+    aggregation_method: PortfolioAggregationMethod,
+    grouping: Optional[List[str]] = None,
+    sbti_factor: float = 1.0,
+    cta_file_path: Optional[str] = None,
+    cta_hash: Optional[str] = None,
+    session_state=None,
+) -> tuple:
+    """Calculate a scenario, optionally reusing a bounded session-owned result.
+
+    Keys include the complete provider tables and portfolio (including schema
+    and index), every scenario argument, CTA contents and the calculation year.
+    Standalone callers without session state always calculate afresh.
+    """
+    kwargs = dict(
+        _provider=_provider, portfolio_df=portfolio_df,
+        engagement_company_ids=engagement_company_ids, scenario_type=scenario_type,
+        engagement_type=engagement_type, time_frames=time_frames, scopes=scopes,
+        aggregation_method=aggregation_method, grouping=grouping,
+        sbti_factor=sbti_factor, cta_file_path=cta_file_path, cta_hash=cta_hash,
+    )
+    # Without an explicit CTA file, SBTi enrichment can depend on an external
+    # default snapshot. Do not reuse results whose source cannot be fingerprinted.
+    if session_state is None or (sbti_factor != 1.0 and cta_file_path is None):
+        return _calculate_scenario_analysis(**kwargs)
+
+    cta_contents = (
+        hashlib.sha256(Path(cta_file_path).read_bytes()).digest()
+        if cta_file_path is not None else None
+    )
+    provider_config = getattr(_provider, "c", None)
+    column_mapping = tuple(
+        (name, getattr(provider_config, name))
+        for name in dir(provider_config) if name.isupper()
+    )
+    inputs = (
+        type(_provider).__module__, type(_provider).__qualname__, column_mapping,
+        _provider.data, portfolio_df, tuple(engagement_company_ids), scenario_type,
+        engagement_type, tuple(time_frames), tuple(scopes), aggregation_method,
+        tuple(grouping) if grouping is not None else None, sbti_factor,
+        cta_file_path, cta_hash, cta_contents, datetime.now().year,
+    )
+    key = hashlib.sha256(pickle.dumps(inputs, protocol=5)).digest()
+    cache = session_state.setdefault("_scenario_cache", OrderedDict())
+    if key in cache:
+        cache.move_to_end(key)
+        # These bytes are created only by this function from calculation outputs;
+        # uploaded pickle files or externally supplied serialized data are never read.
+        return pickle.loads(cache[key])
+
+    result = _calculate_scenario_analysis(**kwargs)
+    payload = pickle.dumps(result, protocol=5)
+    if len(payload) <= SCENARIO_CACHE_MAX_BYTES:
+        while cache and (
+            len(cache) >= SCENARIO_CACHE_MAX_ENTRIES
+            or sum(map(len, cache.values())) + len(payload) > SCENARIO_CACHE_MAX_BYTES
+        ):
+            cache.popitem(last=False)
+        cache[key] = payload
+    return result
+
+
+def _calculate_scenario_analysis(
     _provider: ExcelProvider,
     portfolio_df: pd.DataFrame,
     engagement_company_ids: List[str],

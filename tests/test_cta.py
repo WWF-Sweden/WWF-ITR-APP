@@ -90,8 +90,7 @@ class CTATests(unittest.TestCase):
                 raise RuntimeError("failed calculation")
         self.assertEqual(before, dict(vars(Config)))
 
-    def test_temperature_cache_changes_with_cta_contents_at_same_path(self):
-        calculate_temperature_scores.clear()
+    def test_temperature_calculation_does_not_reuse_global_results(self):
         write_cta(self.path)
         kwargs = dict(_provider=None, _companies=[], time_frames=[ETimeFrames.MID],
                       scopes=[EScope.S1S2], aggregation_method=PortfolioAggregationMethod.WATS,
@@ -101,12 +100,11 @@ class CTATests(unittest.TestCase):
             score.return_value.calculate.return_value = pd.DataFrame({"score": [2.0]})
             calculate_temperature_scores(**kwargs)
             calculate_temperature_scores(**kwargs)
-            self.assertEqual(score.return_value.calculate.call_count, 1)
+            self.assertEqual(score.return_value.calculate.call_count, 2)
             write_cta(self.path, False)
             kwargs["cta_hash"] = cta.cta_fingerprint(self.path)
             calculate_temperature_scores(**kwargs)
-            self.assertEqual(score.return_value.calculate.call_count, 2)
-        calculate_temperature_scores.clear()
+            self.assertEqual(score.return_value.calculate.call_count, 3)
 
     def test_failed_auto_download_warns_and_uses_existing_file(self):
         write_cta(self.path)

@@ -1,3 +1,6 @@
+[browser]
+gatherUsageStats = false
+
 [theme]
 primaryColor = "#5bc5f2"            # WWF light blue – buttons, links, accents
 backgroundColor = "#ffffff"        # White main background

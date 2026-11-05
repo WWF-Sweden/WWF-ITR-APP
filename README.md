@@ -30,6 +30,43 @@ No installation, Docker setup, or Python environment is required. Simply open th
 -   **Data editing** --- Edit portfolio, company fundamentals, and
     targets inline via the UI
 
+## Local data and privacy
+
+The supported setup for confidential data is one user per local installation,
+with a separate data directory. This app does not provide user accounts or
+dataset permissions for a shared server installation. Other accounts and
+processes on the same computer may still be able to access local data;
+follow your organization's rules for device access, disk encryption and backups.
+
+Uploaded provider workbooks, portfolios and pre-scored files are read in memory
+without creating application-managed temporary disk copies. Only the required
+`fundamental_data` and `target_data` sheets are read from provider uploads.
+Provider reconstruction for calculations also takes place in memory.
+Analysis data and results are not stored in global Streamlit caches; the
+current session retains loaded data and may reuse its own calculation results.
+Repeated what-if scenarios can reuse up to three results in that session,
+with a total budget of 32 MiB of serialized result data. This is not a limit
+on the app's total memory use. The key includes the complete provider data,
+portfolio, scenario settings and CTA contents. Least recently used results
+are evicted; a result larger than the budget is calculated without caching.
+The cache stays in memory and is cleared by **Clear loaded data / Change source**
+or normal session disposal. Closing a tab may not dispose of the session immediately.
+Streamlit usage statistics are disabled in the supplied configuration.
+
+Use **Clear loaded data / Change source** to release this session's loaded data,
+results and uploads. This does not delete datasets explicitly saved to SQLite
+or files already downloaded through your browser. It does not securely erase
+process memory. Stop the app/container to end the running process; closing a
+browser tab alone does not guarantee immediate session disposal.
+
+Custom CTA uploads still require a temporary file for the calculation package.
+They use a session-owned temporary directory, removed when the upload is
+replaced, removed or cleared, or when the session owner is normally released.
+Abrupt process termination can leave these temporary files behind. Updating
+does not remove temporary upload files left by earlier versions. Database
+files, browser downloads, backups and operating-system swap are separate from
+the application's in-memory upload handling.
+
 ## Running the Application with Docker
 
 The recommended way to run this application is with Docker. This method
@@ -81,10 +118,16 @@ services:
   itr:
     image: ghcr.io/wwf-sweden/wwf-itr-app:latest
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     volumes:
       - ./data:/app/data
 ```
+
+The port mapping binds the app to your computer's loopback address, so it
+is available locally rather than through your computer's LAN or Wi-Fi address.
+Use Docker Engine 28.0.0 or later: older versions have a known issue that can
+allow other devices on the same network segment to reach ports published to
+localhost ([Docker documentation](https://docs.docker.com/engine/network/port-publishing/)).
 
 **3. Start the application**
 
@@ -229,7 +272,7 @@ pip install -r requirements.txt
 ### Running the App
 
 ``` bash
-streamlit run app.py
+streamlit run app.py --server.address=127.0.0.1
 ```
 
 The app will be available at <http://localhost:8501>.
