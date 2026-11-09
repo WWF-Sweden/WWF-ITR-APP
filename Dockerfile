@@ -16,6 +16,10 @@ COPY . .
 # CTA downloads persist in the same mounted data directory as the database.
 ENV ITR_CTA_PATH=/app/data/cta/current-Companies-Taking-Action.xlsx
 
+# Supplied by the release workflow; local builds default to development.
+ARG APP_VERSION=development
+ENV ITR_APP_VERSION=${APP_VERSION}
+
 # Expose the port Streamlit runs on
 EXPOSE 8501
 
