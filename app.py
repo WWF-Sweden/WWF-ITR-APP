@@ -50,6 +50,7 @@ from utils.data_loader import (
 )
 from db.database import init_db
 from utils.cta import (CTAError, resolve_cta, refresh_cta, cta_fingerprint, store_cta_upload)
+from utils.session import clear_loaded_data
 from utils.scoring import (
     get_timeframe_options,
     get_scope_options,
@@ -159,11 +160,7 @@ def main():
         
         # Clear previously loaded data when the user switches source
         if "_data_source" in st.session_state and st.session_state._data_source != data_source:
-            for _key in ("data_loaded", "portfolio_df", "fundamental_df", "target_df",
-                         "scoring_results", "calculation_run",
-                         "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode",
-                         "provider_scores_df", "data_mode", "ps_aggregation_result"):
-                st.session_state.pop(_key, None)
+            clear_loaded_data(st.session_state)
             st.session_state._data_source = data_source
 
         # -- Source-specific configuration (no data loaded yet) ----------------
@@ -262,13 +259,11 @@ def main():
 
         if data_is_loaded:
             st.success(f"✅ Data loaded ({st.session_state.get('_loaded_source', data_source)})")
-            if st.button("🔄 Reload / Change Source", key="reload_data"):
-                for _key in ("data_loaded", "portfolio_df", "fundamental_df", "target_df",
-                             "scoring_results", "calculation_run",
-                             "edit_portfolio_mode", "edit_fundamental_mode", "edit_target_mode",
-                             "provider_scores_df", "data_mode", "ps_aggregation_result"):
-                    st.session_state.pop(_key, None)
-                st.rerun()
+            st.button(
+                "🔄 Clear loaded data / Change source", key="reload_data",
+                on_click=clear_loaded_data, args=(st.session_state,),
+                help="Clear this session's loaded data and uploads. Saved datasets are kept.",
+            )
         else:
             load_clicked = st.button(
                 "📥 Load Data",
@@ -290,10 +285,8 @@ def main():
                         target_df = provider_dfs["target_data"]
 
                     elif data_source == "Upload Custom Data":
-                        provider_path = load_uploaded_provider_file(uploaded_provider)
-                        provider = load_provider_data(provider_path)
+                        provider_dfs = load_uploaded_provider_file(uploaded_provider)
                         portfolio_df = load_uploaded_portfolio_file(uploaded_portfolio)
-                        provider_dfs = extract_provider_dataframes(provider_path)
                         fundamental_df = provider_dfs["fundamental_data"]
                         target_df = provider_dfs["target_data"]
                         # Validate portfolio
@@ -1291,6 +1284,7 @@ def main():
                         sbti_factor=sbti_factor,
                         cta_file_path=cta_file_path if sbti_factor != 1.0 else None,
                         cta_hash=cta_hash if sbti_factor != 1.0 else None,
+                        session_state=st.session_state,
                     )
 
                     # Calculate impact
