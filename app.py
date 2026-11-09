@@ -6,6 +6,7 @@ This app allows users to analyze portfolios' and companies' GHG emissions
 reduction targets using the CDP-WWF Temperature Scoring Methodology.
 """
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 import hashlib
 import os
 import streamlit as st
@@ -462,6 +463,14 @@ def main():
             cta_hash = None
             cta_error = None
             store_cta_upload(st.session_state, None)
+
+        try:
+            engine_version = version("WWF-ITR")
+        except PackageNotFoundError:
+            engine_version = "unknown"
+        app_version = os.environ.get("ITR_APP_VERSION") or "development"
+        st.divider()
+        st.caption(f"App {app_version} · WWF-ITR {engine_version}")
 
     # ------------------------------------------------------------------
     # Guard: show landing page if no data loaded yet
