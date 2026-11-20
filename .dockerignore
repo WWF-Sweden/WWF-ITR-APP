@@ -4,6 +4,7 @@
 # Application code and dependencies.
 !Dockerfile
 !requirements.txt
+!LICENSE
 !app.py
 !deployment.py
 !utils/
@@ -11,16 +12,20 @@
 !db/
 !db/**
 
-# Streamlit configuration and application assets.
-!.streamlit/
+# Streamlit configuration: include only this file.
 !.streamlit/config.toml
+
+# Application assets.
 !assets/
 !assets/**
 
-# Bundled example data.
-!data/
-!data/data_provider_example*.xlsx
-!data/example_portfolio*.csv
+# Bundled example data: include only these files.
+!data/data_provider_example.xlsx
+!data/data_provider_example2.xlsx
+!data/data_provider_example_360.xlsx
+!data/example_portfolio.csv
+!data/example_portfolio2.csv
+!data/example_portfolio_360.csv
 
 # Exclude generated files even within allowed directories.
 **/__pycache__/
