@@ -1,0 +1,27 @@
+# Exclude everything by default.
+**
+
+# Application code and dependencies.
+!Dockerfile
+!requirements.txt
+!app.py
+!deployment.py
+!utils/
+!utils/**
+!db/
+!db/**
+
+# Streamlit configuration and application assets.
+!.streamlit/
+!.streamlit/config.toml
+!assets/
+!assets/**
+
+# Bundled example data.
+!data/
+!data/data_provider_example*.xlsx
+!data/example_portfolio*.csv
+
+# Exclude generated files even within allowed directories.
+**/__pycache__/
+**/*.py[cod]
