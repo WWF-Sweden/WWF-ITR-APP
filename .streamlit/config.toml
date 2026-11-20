@@ -1,3 +1,7 @@
+[server]
+# Default for direct local execution; Docker overrides this inside the container.
+address = "127.0.0.1"
+
 [browser]
 gatherUsageStats = false
 

@@ -20,10 +20,14 @@ ENV ITR_CTA_PATH=/app/data/cta/current-Companies-Taking-Action.xlsx
 ARG APP_VERSION=development
 ENV ITR_APP_VERSION=${APP_VERSION}
 
-# Expose the port Streamlit runs on
+# Enable the dataset database for this image's intended local use.
+# This does not provide authentication or isolate users.
+ENV ITR_DEPLOYMENT=local
+
+# Expose the port Streamlit runs on.
 EXPOSE 8501
 
-# Command to run the app
-# Use --server.enableCORS=false to avoid potential cross-origin issues
-# Use --server.runOnSave=false for production
-CMD ["streamlit", "run", "app.py", "--server.enableCORS=false", "--server.runOnSave=false"]
+# Listen on all interfaces inside the container so Docker can reach Streamlit.
+# Restrict host access with the Compose mapping "127.0.0.1:8501:8501".
+# Command-line options override .streamlit/config.toml.
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.enableCORS=false", "--server.runOnSave=false"]
