@@ -11,13 +11,26 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from deployment import is_local_deployment
+
 # Default database location
 _DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _DB_NAME = "itr_data.db"
 
 
+class DatabaseDisabledError(RuntimeError):
+    """Dataset database access is disabled in this deployment."""
+
+
 def get_db_path() -> str:
-    """Return the full path to the SQLite database file."""
+    """Return the database path only when local mode is explicitly enabled."""
+    if not is_local_deployment():
+        raise DatabaseDisabledError(
+            "The dataset database is disabled. "
+            "Set ITR_DEPLOYMENT=local only for an installation "
+            "you control and have restricted to authorised users."
+        )
+
     os.makedirs(_DB_DIR, exist_ok=True)
     return os.path.join(_DB_DIR, _DB_NAME)
 

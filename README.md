@@ -129,6 +129,19 @@ Use Docker Engine 28.0.0 or later: older versions have a known issue that can
 allow other devices on the same network segment to reach ports published to
 localhost ([Docker documentation](https://docs.docker.com/engine/network/port-publishing/)).
 
+The Docker image sets `ITR_DEPLOYMENT=local`, enabling the dataset database.
+With the volume mapping above, saved datasets are stored in
+`./data/itr_data.db` on your computer and remain available when the container
+is replaced.
+
+Keep the port mapping `"127.0.0.1:8501:8501"` for local use. The image's
+local mode does not provide authentication or separate datasets by user.
+Publishing this image on a shared or public server would require additional
+access controls, or disabling the dataset database.
+
+After starting the app, run `docker compose ps` and verify that the
+published port is shown as `127.0.0.1:8501->8501/tcp`.
+
 **3. Start the application**
 
 Open a terminal, navigate to the directory containing
@@ -271,11 +284,35 @@ pip install -r requirements.txt
 
 ### Running the App
 
-``` bash
-streamlit run app.py --server.address=127.0.0.1
+To enable saving and loading datasets on your own computer:
+
+**macOS / Linux**
+
+```bash
+ITR_DEPLOYMENT=local streamlit run app.py
+```
+
+**Windows PowerShell**
+
+```powershell
+$env:ITR_DEPLOYMENT = "local"
+streamlit run app.py
 ```
 
 The app will be available at <http://localhost:8501>.
+
+The repository's `.streamlit/config.toml` defaults to listening on
+`127.0.0.1`. Run the command from the repository root so this configuration
+is loaded. Streamlit environment variables and command-line flags can
+override this setting.
+
+Without `ITR_DEPLOYMENT=local`, the app runs in demo mode. The dataset
+database is disabled, but sample data, file uploads, calculations, editing
+and exports remain available. Upload warnings are shown in demo mode.
+
+`ITR_DEPLOYMENT=local` enables database access; it does not verify that
+the app is running locally or provide authentication. Enable it only for
+an installation you control and have restricted to authorised users.
 
 ------------------------------------------------------------------------
 
@@ -342,28 +379,35 @@ See [Running the Application with
 Docker](#running-the-application-with-docker) for installation and usage
 instructions.
 
-### Streamlit Cloud (demo / sample data only)
+### Streamlit Community Cloud (demo)
 
-The app can be deployed to [Streamlit Cloud](https://streamlit.io/cloud)
-for demonstration purposes using the built-in sample data.
+The app can be deployed to
+[Streamlit Community Cloud](https://streamlit.io/cloud)
+for demonstration purposes.
 
-File upload is technically possible but **not recommended for sensitive
-portfolio data**, as uploaded files are processed on Streamlit's servers
-(US-based, AWS).
+No deployment-mode secret is required. Unless `ITR_DEPLOYMENT=local`
+is explicitly set, the dataset database is disabled and upload warnings
+are shown.
 
-**Important --- required secret:** When deploying to Streamlit Cloud,
-add the following to the app's secrets (Streamlit Cloud dashboard → your
-app → **Settings** → **Secrets**):
+Do not set `ITR_DEPLOYMENT=local` in Community Cloud. An existing
+`ITR_DEPLOYMENT = "cloud"` secret also leaves the database disabled
+and can be removed.
 
-``` toml
-ITR_DEPLOYMENT = "cloud"
-```
+Sample data, uploads, calculations, editing and exports remain available.
+Uploaded data is processed on Streamlit Community Cloud servers in the
+United States. Use a local installation for sensitive or confidential data.
 
-This activates a warning in the UI that informs users their uploaded
-data will be processed on external servers.
+Disabling the dataset database blocks the app's database operations.
+It does not mean that uploaded data is never processed, cached, or held
+temporarily on the server.
 
-Without this secret, the app assumes it is running locally and no
-warning is shown.
+Before deploying changes to the public demo, verify startup and access
+in a separate test deployment, including compatibility with the
+`server.address` setting in `.streamlit/config.toml`.
+
+Disabling database access does not delete an existing database file.
+If previous deployments stored datasets, handle their removal explicitly
+and verify the result. Do not rely on an app reboot as proof of deletion.
 
 ## Updating the WWF-ITR dependency
 

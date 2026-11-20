@@ -14,9 +14,15 @@ import pandas as pd
 import plotly.express as px
 import logging
 
-# Deployment mode: set ITR_DEPLOYMENT=cloud in Streamlit Cloud environment settings.
-# Absence of the variable is treated as local/safe (pip install, Docker, etc.).
-is_cloud = os.environ.get("ITR_DEPLOYMENT") == "cloud"
+from deployment import is_local_deployment
+
+
+DEMO_UPLOAD_WARNING = (
+    "⚠️ **Dataset database disabled.** "
+    "If you are using the online demo, uploaded data is processed on "
+    "Streamlit Community Cloud servers in the United States. "
+    "For sensitive or confidential data, use a local installation."
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -89,6 +95,7 @@ st.set_page_config(
 
 def main():
     """Main application entry point."""
+    is_local = is_local_deployment()
     
     # Load custom CSS
     with open("assets/style.css") as css_file:
@@ -152,11 +159,22 @@ def main():
         st.header("📊 Data Configuration")
         st.markdown("[📄 Data Requirements](https://wwf-sweden.github.io/ITR-tool/DataRequirements.html)")
         
+        source_options = [
+            "Sample Data",
+            "Upload Custom Data",
+            "Pre-scored Data (4b format)",
+        ]
+        if is_local:
+            source_options.append("Load from Database")
+
         data_source = st.radio(
             "Data Source",
-            options=["Sample Data", "Upload Custom Data", "Pre-scored Data (4b format)", "Load from Database"],
+            options=source_options,
             index=0,
-            help="Choose sample data, upload files, upload pre-scored data, or load a previously saved dataset"
+            help=(
+                "Choose sample data, upload files or upload pre-scored data"
+                + (", or load a previously saved dataset" if is_local else "")
+            ),
         )
         
         # Clear previously loaded data when the user switches source
@@ -176,12 +194,8 @@ def main():
             _ready_to_load = True
 
         elif data_source == "Upload Custom Data":
-            if is_cloud:
-                st.warning(
-                    "⚠️ **Cloud deployment detected.** Any data you upload will be "
-                    "processed on Streamlit's servers (US-based). For sensitive or "
-                    "confidential portfolio data, use the local Docker installation instead."
-                )
+            if not is_local:
+                st.warning(DEMO_UPLOAD_WARNING)
             st.markdown("#### Provider Data (Excel)")
             uploaded_provider = st.file_uploader(
                 "Upload fundamental & target data",
@@ -204,12 +218,8 @@ def main():
                 st.warning("⚠️ Please upload both files to continue")
 
         elif data_source == "Pre-scored Data (4b format)":
-            if is_cloud:
-                st.warning(
-                    "⚠️ **Cloud deployment detected.** Any data you upload will be "
-                    "processed on Streamlit's servers (US-based). For sensitive or "
-                    "confidential portfolio data, use the local Docker installation instead."
-                )
+            if not is_local:
+                st.warning(DEMO_UPLOAD_WARNING)
             st.info(
                 "Upload an Excel file containing pre-computed temperature scores from a "
                 "data provider (the format used in notebook 4b).  "
@@ -227,7 +237,7 @@ def main():
             else:
                 st.warning("⚠️ Please upload the pre-scored Excel file to continue")
 
-        else:  # Load from Database
+        elif is_local and data_source == "Load from Database":
             init_db()
             datasets = get_saved_datasets()
             if not datasets:
@@ -263,7 +273,10 @@ def main():
             st.button(
                 "🔄 Clear loaded data / Change source", key="reload_data",
                 on_click=clear_loaded_data, args=(st.session_state,),
-                help="Clear this session's loaded data and uploads. Saved datasets are kept.",
+                help=(
+                    "Clear this session's loaded data and uploads."
+                    + (" Saved datasets are kept." if is_local else "")
+                ),
             )
         else:
             load_clicked = st.button(
@@ -312,11 +325,17 @@ def main():
                         fundamental_df = pd.DataFrame()
                         target_df = pd.DataFrame()
 
-                    else:  # Load from Database
+                    elif is_local and data_source == "Load from Database":
                         db_data = load_data_from_db(selected_dataset)
                         portfolio_df = db_data["portfolio"]
                         fundamental_df = db_data["fundamental_data"]
                         target_df = db_data["target_data"]
+
+                    else:
+                        raise ValueError(
+                            "The selected data source is unavailable "
+                            "in this deployment."
+                        )
 
                     # Persist loaded data into session state
                     st.session_state.portfolio_df = portfolio_df.copy()
@@ -470,7 +489,14 @@ def main():
             engine_version = "unknown"
         app_version = os.environ.get("ITR_APP_VERSION") or "development"
         st.divider()
-        st.caption(f"App {app_version} · WWF-ITR {engine_version}")
+        mode_label = (
+            "Local mode · dataset database enabled"
+            if is_local
+            else "Demo mode · dataset database disabled"
+        )
+        st.caption(
+            f"App {app_version} · WWF-ITR {engine_version} · {mode_label}"
+        )
 
     # ------------------------------------------------------------------
     # Guard: show landing page if no data loaded yet
@@ -478,11 +504,11 @@ def main():
     if not st.session_state.get("data_loaded", False):
         st.markdown("---")
         st.markdown(
-            """
+            f"""
             ### 👋 Welcome! Choose a data source to get started.
 
             Use the **sidebar** on the left to:
-            1. **Select** a data source (Sample Data, Upload, or Database)
+            1. **Select** a data source (Sample Data, Upload{', or Database' if is_local else ''})
             2. Configure any required options (e.g. upload files)
             3. Click **📥 Load Data** to begin
 
@@ -560,8 +586,12 @@ def main():
         st.markdown("---")
         st.subheader("📝 Review & Edit Data")
         st.caption(
-            "Inspect the loaded data below. Click **Edit** to modify a table. "
-            "Use **Save to Database** to persist changes between sessions."
+            "Inspect the loaded data below. Click **Edit** to modify a table."
+            + (
+                " Use **Save to Database** to persist changes between sessions."
+                if is_local
+                else ""
+            )
         )
 
         # Toggle flags for editing mode
@@ -689,27 +719,28 @@ def main():
         target_df, _ = clean_target_df(st.session_state.target_df)
         st.session_state.target_df = target_df
 
-        # -- Save to Database (uses edited data) --------------------------------
-        with st.expander("💾 Save data to local database", expanded=False):
-            save_col1, save_col2 = st.columns([2, 1])
-            with save_col1:
-                save_name = st.text_input(
-                    "Dataset name",
-                    value="my_dataset",
-                    key="save_ds_name",
-                    help="Give this dataset a name for later retrieval"
-                )
-                save_desc = st.text_input(
-                    "Description (optional)",
-                    value="",
-                    key="save_ds_desc",
-                )
-            with save_col2:
-                st.markdown("")
-                st.markdown("")
-                if st.button("💾 Save", type="primary", key="save_to_db"):
-                    save_data_to_db(save_name, portfolio_df, fundamental_df, target_df, save_desc)
-                    st.success(f"✅ Saved as '{save_name}'")
+        # -- Save to Database (local deployments only) -------------------------
+        if is_local:
+            with st.expander("💾 Save data to local database", expanded=False):
+                save_col1, save_col2 = st.columns([2, 1])
+                with save_col1:
+                    save_name = st.text_input(
+                        "Dataset name",
+                        value="my_dataset",
+                        key="save_ds_name",
+                        help="Give this dataset a name for later retrieval"
+                    )
+                    save_desc = st.text_input(
+                        "Description (optional)",
+                        value="",
+                        key="save_ds_desc",
+                    )
+                with save_col2:
+                    st.markdown("")
+                    st.markdown("")
+                    if st.button("💾 Save", type="primary", key="save_to_db"):
+                        save_data_to_db(save_name, portfolio_df, fundamental_df, target_df, save_desc)
+                        st.success(f"✅ Saved as '{save_name}'")
 
         # Rebuild provider from current (possibly edited) DataFrames
         provider = create_provider_from_dataframes(fundamental_df, target_df)
